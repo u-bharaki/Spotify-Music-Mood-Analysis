@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: vibestream-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # 1. KRaft (No Zookeeper) Mode
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+
+      # 2. Port and Communication
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+
+      # 3. Topic Automation
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: vibestream-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=vibe_admin
+      - POSTGRES_PASSWORD=vibe_password
+      - POSTGRES_DB=vibestream_db
+    volumes:
+      # 1. Permanent Disc Space
+      - postgres_data:/var/lib/postgresql/data
+      # 2. Path/to/init.sql
+      - ../PostgreSQL/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:
