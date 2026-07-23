@@ -81,7 +81,7 @@ def main():
     print("=== VIBESTREAM DATA PREP BATCH PROCESS ===")
 
     # Klasör yollarını (Kendi bilgisayarına göre ayarla)
-    base_dir = r"C:\Path\to\datasets"
+    base_dir = r"..\Datasets"
 
     # Girdiler
     features_input = os.path.join(base_dir, "Spotify Dataset.csv")

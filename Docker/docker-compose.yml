@@ -35,5 +35,36 @@ services:
       # 2. Path/to/init.sql
       - ../PostgreSQL/init.sql:/docker-entrypoint-initdb.d/init.sql
 
+  redis:
+    image: redis:alpine
+    container_name: vibestream-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+
+  seeder:
+    image: python:3.10-slim
+    container_name: vibestream-seeder
+    depends_on:
+      - redis
+    volumes:
+      - "../:/app"
+    working_dir: "/app/Redis Feed"
+    command: sh -c "pip install pandas redis && python Seeder.py"
+
+  simulator:
+    image: python:3.10-slim
+    container_name: vibestream-simulator
+    depends_on:
+      - kafka
+      - redis
+    volumes:
+      - ../:/app
+    working_dir: "/app/Log Streamer"
+    command: sh -c "pip install pandas kafka-python redis && python LogStreamer.py"
+
 volumes:
   postgres_data:
+  redis_data:
