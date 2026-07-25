@@ -15,7 +15,7 @@ def clean_artists(artist_str):
 
 def prepare_redis_seed_data(file_path, output_path):
     """
-    For song's properties dagtaset, removes unnecessarries, rounds,
+    For song's properties dataset, removes unnecessaries, rounds,
     Calculates artist and OTHERS, and creates Redis JSON.
     """
     print("-> 1/2: Spotify Özellikleri (Redis Seed) işleniyor...")
@@ -80,8 +80,10 @@ def clean_streaming_history(file_path, output_path):
 def main():
     print("=== VIBESTREAM DATA PREP BATCH PROCESS ===")
 
-    # Klasör yollarını (Kendi bilgisayarına göre ayarla)
-    base_dir = r"..\Datasets"
+    # DÜZELTİLDİ: Windows'a özel "..\Datasets" raw-string yolu Linux container'da
+    # (Seeder.py bunu docker içinde subprocess ile tetiklediğinde) çalışmıyordu.
+    # os.path.join ile platformdan bağımsız hale getirildi.
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "Datasets")
 
     # Girdiler
     features_input = os.path.join(base_dir, "Spotify Dataset.csv")
