@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS realtime_streaming_events CASCADE;
 DROP TABLE IF EXISTS system_metrics CASCADE;
 DROP TABLE IF EXISTS realtime_leaderboard CASCADE;
 DROP TABLE IF EXISTS engagement_metrics CASCADE;
@@ -73,6 +74,21 @@ CREATE TABLE IF NOT EXISTS global_fallback_metrics (
     avg_valence NUMERIC(5,4),
     avg_tempo NUMERIC(7,3)
 );
+
+-- YENİ: VibeStreamApp.scala bu tabloya yazıyor (enrichedDF -> realtime_streaming_events)
+-- ama tabloyu tanımlayan CREATE ifadesi rapordaki şemada yoktu. Eklendi.
+CREATE TABLE IF NOT EXISTS realtime_streaming_events (
+    id SERIAL PRIMARY KEY,
+    "timestamp" TIMESTAMP NOT NULL,
+    track_uri VARCHAR(255),
+    artist_name VARCHAR(255),
+    ms_played INT,
+    energy NUMERIC(5,4),
+    valence NUMERIC(5,4),
+    danceability NUMERIC(5,4)
+);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON realtime_streaming_events("timestamp");
+CREATE INDEX IF NOT EXISTS idx_events_track ON realtime_streaming_events(track_uri);
 
 CREATE TABLE IF NOT EXISTS realtime_mood_metrics (
     id SERIAL PRIMARY KEY,
