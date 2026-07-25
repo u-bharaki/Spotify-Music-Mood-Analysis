@@ -20,5 +20,5 @@ libraryDependencies ++= Seq(
 
   "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2" // JSON parse için
 )
-)
+
 
