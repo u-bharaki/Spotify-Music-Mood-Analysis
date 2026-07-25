@@ -44,13 +44,16 @@ object VibeStreamApp {
     dbProps.put("password", "vibe_password")
     dbProps.put("driver", "org.postgresql.Driver")
 
+    // Kaydırmalı pencere boyutu (paper'da iddia edilen 1 saatlik pencere)
+    val WINDOW_DURATION = "1 hour"
+
     // MICRO-BATCH İŞLEME VE ANALİTİK
     val query = parsedLogDF.writeStream
       .foreachBatch { (batchDF: DataFrame, batchId: Long) =>
         if (!batchDF.isEmpty) {
           println(s"--- Micro-Batch $batchId İşleniyor ---")
 
-          // 1. ZENGİNLEŞTİRME VE PARÇALAMA (Enrichment)
+          // 1. ZENGİNLEŞTİRME (Redis ile Hierarchical Fallback: Track -> Artist -> Global)
           val enrichedRDD = batchDF.rdd.mapPartitions { partition =>
             val jedis = new Jedis("redis", 6379)
             val mapper = new ObjectMapper()
@@ -77,10 +80,11 @@ object VibeStreamApp {
                   valence = featuresMap.getOrElse("valence", 0.0).toString.toDouble
                   danceability = featuresMap.getOrElse("danceability", 0.0).toString.toDouble
                 } catch {
-                  case e: Exception => // Hatalı JSON'u atla
+                  case _: Exception => // Hatalı JSON'u atla
                 }
               }
 
+              // NOT: ts formatı LogStreamer.py tarafından 'yyyy-MM-dd HH:mm:ss' olarak üretiliyor.
               Row(Timestamp.valueOf(ts), trackUri, artistName, msPlayed, energy, valence, danceability)
             }
             jedis.close()
@@ -88,7 +92,7 @@ object VibeStreamApp {
           }
 
           val enrichedSchema = new StructType()
-            .add("timestamp", TimestampType)
+            .add("event_time", TimestampType)
             .add("track_uri", StringType)
             .add("artist_name", StringType)
             .add("ms_played", IntegerType)
@@ -97,31 +101,48 @@ object VibeStreamApp {
             .add("danceability", DoubleType)
 
           val enrichedDF = spark.createDataFrame(enrichedRDD, enrichedSchema)
-          enrichedDF.cache() // Veriyi RAM'de tut, üç kere kullanacağız!
+          enrichedDF.cache() // Üç farklı sink için tekrar tekrar kullanılıyor
 
-          // GÖREV 1: Ham Zenginleştirilmiş Veriyi Yaz (realtime_streaming_events)
-          enrichedDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_streaming_events", dbProps)
+          // GÖREV 1: Ham zenginleştirilmiş veriyi yaz
+          // DİKKAT: bu tablo Postgre/raporUpdated.sql içinde CREATE TABLE ile tanımlı olmalı,
+          // aksi halde JDBC "relation does not exist" hatası verir.
+          enrichedDF
+            .withColumnRenamed("event_time", "timestamp")
+            .write.mode(SaveMode.Append)
+            .jdbc(dbUrl, "realtime_streaming_events", dbProps)
 
-          // GÖREV 2: Realtime Leaderboard (En Çok Dinlenenler)
+          // GÖREV 2: Leaderboard — event-time'a göre 1 saatlik pencerelere bölünüyor
+          // (Eski versiyonda current_timestamp() = processing time kullanılıyordu,
+          //  bu paper'daki "sliding window" iddiasıyla çelişiyordu. Artık event_time kullanılıyor.)
           val leaderboardDF = enrichedDF
-            .groupBy("track_uri")
+            .groupBy(window(col("event_time"), WINDOW_DURATION), col("track_uri"))
             .agg(count("*").as("play_count"))
-            .withColumn("window_start_time", current_timestamp()) // O anki micro-batch zamanı
+            .select(
+              col("window.start").as("window_start_time"),
+              col("track_uri"),
+              col("play_count")
+            )
 
           leaderboardDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_leaderboard", dbProps)
 
-          // GÖREV 3: Mood Metrics (Enerji ve Mod Analizi)
+          // GÖREV 3: Mood Metrics — aynı şekilde event-time pencereli
           val moodMetricsDF = enrichedDF
+            .groupBy(window(col("event_time"), WINDOW_DURATION))
             .agg(
               avg("valence").as("avg_valence"),
               avg("energy").as("avg_energy"),
               count("*").as("total_streams")
             )
-            .withColumn("window_start_time", current_timestamp())
+            .select(
+              col("window.start").as("window_start_time"),
+              col("avg_valence"),
+              col("avg_energy"),
+              col("total_streams")
+            )
 
           moodMetricsDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
 
-          enrichedDF.unpersist() // RAM'i temizle
+          enrichedDF.unpersist()
           println(s"--- Micro-Batch $batchId Başarıyla Postgres'e Aktarıldı ---")
         }
       }
