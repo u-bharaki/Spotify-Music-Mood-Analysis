@@ -2,28 +2,42 @@ version: '3.8'
 
 services:
   kafka:
-    image: bitnami/kafka:latest
+    image: apache/kafka:latest
     container_name: vibestream-kafka
     ports:
       - "9092:9092"
     environment:
       # 1. KRaft (No Zookeeper) Mode
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=controller,broker
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_KRAFT_CLUSTER_ID=vibestream_kraft_cluster_123
 
       # 2. Port and Communication
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
 
       # 3. Topic Automation
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
       interval: 10s
       timeout: 10s
       retries: 10
+  kafka-init:
+    image: apache/kafka:latest
+    container_name: vibestream-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      sh -c "
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list | grep -q vibestream_logs ||
+      /opt/kafka/bin/kafka-topics.sh --create --topic vibestream_logs --partitions 1 --replication-factor 1 --bootstrap-server kafka:9092
+      "
 
   postgres:
     image: postgres:15-alpine
@@ -72,20 +86,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      seeder:
+        condition: service_completed_successfully
     volumes:
       - ../:/app
     working_dir: "/app/Log Streamer"
-    command: sh -c "pip install pandas kafka-python redis && python LogStreamer.py"
+    command: sh -c "pip install pandas kafka-python redis && tail -f /dev/null"
 
   # YENİ: Spark Streaming servisi eksikti. VibeStreamApp.scala'yı derleyip çalıştırır.
   # "Spark Streaming" klasöründe `sbt assembly` ile fat-jar üretildiğini varsayar
   # (build.sbt'ye eklenen sbt-assembly plugin ile).
   spark:
-    image: bitnami/spark:3.5.0
+    image: apache/spark:3.5.0
     container_name: vibestream-spark
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       postgres:
@@ -94,8 +112,9 @@ services:
       - "../Spark Streaming:/app"
     working_dir: /app
     command: >
-      spark-submit
+      /opt/spark/bin/spark-submit
       --master local[*]
+      --conf "spark.jars.ivy=/tmp/.ivy2"
       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0,redis.clients:jedis:4.4.3,com.fasterxml.jackson.module:jackson-module-scala_2.12:2.15.2
       --class VibeStreamApp
       /app/target/scala-2.12/VibeStream-assembly-1.0.jar

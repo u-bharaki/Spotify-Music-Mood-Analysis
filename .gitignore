@@ -1,1 +1,4 @@
-Datasets\*.csv
+.idea/*
+Datasets/*
+One-off Scripts/DatasetIDMatcher.py
+One-off Scripts/redis_seed_data.json
