@@ -1,0 +1,10 @@
+FROM apache/superset:latest
+
+USER root
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    /app/.venv/bin/python get-pip.py && \
+    /app/.venv/bin/python -m pip install psycopg2-binary && \
+    rm get-pip.py
+
+USER superset

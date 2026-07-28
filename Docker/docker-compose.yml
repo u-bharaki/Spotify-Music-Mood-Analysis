@@ -48,10 +48,9 @@ services:
       - POSTGRES_USER=vibe_admin
       - POSTGRES_PASSWORD=vibe_password
       - POSTGRES_DB=vibestream_db
+      - POSTGRES_HOST_AUTH_METHOD=md5
     volumes:
-      # 1. Permanent Disc Space
       - postgres_data:/var/lib/postgresql/data
-      # 2. DÜZELTİLDİ: klasör adı "Postgre" (PostgreSQL değil), dosya "raporUpdated.sql" (init.sql değil)
       - ../Postgre/raporUpdated.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vibe_admin -d vibestream_db"]
@@ -121,7 +120,9 @@ services:
 
   # YENİ: Dashboard - Apache Superset
   superset:
-    image: apache/superset:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.superset
     container_name: vibestream-superset
     depends_on:
       postgres:
