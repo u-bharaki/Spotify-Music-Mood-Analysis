@@ -22,9 +22,12 @@ object VibeStreamApp {
       .add("ts", StringType)
       .add("ms_played", IntegerType)
       .add("spotify_track_uri", StringType)
+      .add("track_name", StringType)
+      .add("album_name", StringType)
       .add("artist_name", StringType)
       .add("shuffle", BooleanType)
       .add("skipped", BooleanType)
+      .add("reason_end", StringType)
 
     val rawKafkaDF = spark.readStream
       .format("kafka")
@@ -44,16 +47,13 @@ object VibeStreamApp {
     dbProps.put("password", "vibe_password")
     dbProps.put("driver", "org.postgresql.Driver")
 
-    // Kaydırmalı pencere boyutu (paper'da iddia edilen 1 saatlik pencere)
-    val WINDOW_DURATION = "1 hour"
-
     // MICRO-BATCH İŞLEME VE ANALİTİK
     val query = parsedLogDF.writeStream
       .foreachBatch { (batchDF: DataFrame, batchId: Long) =>
         if (!batchDF.isEmpty) {
           println(s"--- Micro-Batch $batchId İşleniyor ---")
 
-          // 1. ZENGİNLEŞTİRME (Redis ile Hierarchical Fallback: Track -> Artist -> Global)
+          // 1. ZENGİNLEŞTİRME VE PARÇALAMA (Enrichment)
           val enrichedRDD = batchDF.rdd.mapPartitions { partition =>
             val jedis = new Jedis("redis", 6379)
             val mapper = new ObjectMapper()
@@ -62,8 +62,12 @@ object VibeStreamApp {
             val enrichedRows = partition.map { row =>
               val ts = row.getAs[String]("ts")
               val trackUri = row.getAs[String]("spotify_track_uri")
+              val trackName = row.getAs[String]("track_name")
+              val albumName = row.getAs[String]("album_name")
               val artistName = row.getAs[String]("artist_name")
               val msPlayed = row.getAs[Int]("ms_played")
+              val skipped = row.getAs[Boolean]("skipped")
+              val reasonEnd = row.getAs[String]("reason_end")
 
               var featuresStr = jedis.get(s"track:$trackUri")
               if (featuresStr == null) featuresStr = jedis.get(s"artist:$artistName")
@@ -72,6 +76,9 @@ object VibeStreamApp {
               var energy = 0.0
               var valence = 0.0
               var danceability = 0.0
+              var acousticness = 0.0
+              var durationMs = 0L
+              var year = 0
 
               if (featuresStr != null) {
                 try {
@@ -79,70 +86,103 @@ object VibeStreamApp {
                   energy = featuresMap.getOrElse("energy", 0.0).toString.toDouble
                   valence = featuresMap.getOrElse("valence", 0.0).toString.toDouble
                   danceability = featuresMap.getOrElse("danceability", 0.0).toString.toDouble
+                  acousticness = featuresMap.getOrElse("acousticness", 0.0).toString.toDouble
+                  durationMs = featuresMap.getOrElse("duration_ms", 0.0).toString.toDouble.toLong
+                  year = featuresMap.getOrElse("year", 0.0).toString.toDouble.toInt
                 } catch {
-                  case _: Exception => // Hatalı JSON'u atla
+                  case e: Exception => // Hatalı JSON'u atla
                 }
               }
 
-              // NOT: ts formatı LogStreamer.py tarafından 'yyyy-MM-dd HH:mm:ss' olarak üretiliyor.
-              Row(Timestamp.valueOf(ts), trackUri, artistName, msPlayed, energy, valence, danceability)
+              // Tamamlanma oranı: gerçek çalma süresi / şarkının toplam süresi (0-1 aralığına sıkıştırılmış)
+              val completionRate =
+                if (durationMs > 0) math.min(msPlayed.toDouble / durationMs.toDouble, 1.0) else 0.0
+
+              val isSkip = skipped || (reasonEnd != null && reasonEnd.toLowerCase.contains("skip"))
+
+              val tsTimestamp = Timestamp.valueOf(ts)
+              val localDt = tsTimestamp.toLocalDateTime
+              val hourOfDay = localDt.getHour
+              val dayOfWeek = localDt.getDayOfWeek.getValue // 1 = Pazartesi ... 7 = Pazar
+
+              Row(tsTimestamp, trackUri, trackName, albumName, artistName, msPlayed, energy, valence,
+                danceability, acousticness, durationMs, year, completionRate, isSkip, hourOfDay, dayOfWeek)
             }
             jedis.close()
             enrichedRows
           }
 
           val enrichedSchema = new StructType()
-            .add("event_time", TimestampType)
+            .add("timestamp", TimestampType)
             .add("track_uri", StringType)
+            .add("track_name", StringType)
+            .add("album_name", StringType)
             .add("artist_name", StringType)
             .add("ms_played", IntegerType)
             .add("energy", DoubleType)
             .add("valence", DoubleType)
             .add("danceability", DoubleType)
+            .add("acousticness", DoubleType)
+            .add("duration_ms", LongType)
+            .add("year", IntegerType)
+            .add("completion_rate", DoubleType)
+            .add("is_skip", BooleanType)
+            .add("hour_of_day", IntegerType)
+            .add("day_of_week", IntegerType)
 
           val enrichedDF = spark.createDataFrame(enrichedRDD, enrichedSchema)
-          enrichedDF.cache() // Üç farklı sink için tekrar tekrar kullanılıyor
+          enrichedDF.cache() // Veriyi RAM'de tut, üç kere kullanacağız!
 
-          // GÖREV 1: Ham zenginleştirilmiş veriyi yaz
-          // DİKKAT: bu tablo Postgre/raporUpdated.sql içinde CREATE TABLE ile tanımlı olmalı,
-          // aksi halde JDBC "relation does not exist" hatası verir.
-          enrichedDF
-            .withColumnRenamed("event_time", "timestamp")
-            .write.mode(SaveMode.Append)
-            .jdbc(dbUrl, "realtime_streaming_events", dbProps)
+          // GÖREV 1: Ham Zenginleştirilmiş Veriyi Yaz (realtime_streaming_events)
+          enrichedDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_streaming_events", dbProps)
 
-          // GÖREV 2: Leaderboard — event-time'a göre 1 saatlik pencerelere bölünüyor
-          // (Eski versiyonda current_timestamp() = processing time kullanılıyordu,
-          //  bu paper'daki "sliding window" iddiasıyla çelişiyordu. Artık event_time kullanılıyor.)
+          // GÖREV 2: Realtime Leaderboard (En Çok Dinlenenler)
           val leaderboardDF = enrichedDF
-            .groupBy(window(col("event_time"), WINDOW_DURATION), col("track_uri"))
-            .agg(count("*").as("play_count"))
-            .select(
-              col("window.start").as("window_start_time"),
-              col("track_uri"),
-              col("play_count")
+            .groupBy("track_uri")
+            .agg(
+              first("track_name").as("track_name"),
+              first("artist_name").as("artist_name"),
+              count("*").as("play_count")
             )
+            .withColumn("window_start_time", current_timestamp()) // O anki micro-batch zamanı
 
           leaderboardDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_leaderboard", dbProps)
 
-          // GÖREV 3: Mood Metrics — aynı şekilde event-time pencereli
+          // GÖREV 3: Mood Metrics (Enerji ve Mod Analizi)
           val moodMetricsDF = enrichedDF
-            .groupBy(window(col("event_time"), WINDOW_DURATION))
             .agg(
               avg("valence").as("avg_valence"),
               avg("energy").as("avg_energy"),
               count("*").as("total_streams")
             )
-            .select(
-              col("window.start").as("window_start_time"),
-              col("avg_valence"),
-              col("avg_energy"),
-              col("total_streams")
-            )
+            .withColumn("window_start_time", current_timestamp())
 
           moodMetricsDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
 
-          enrichedDF.unpersist()
+          // GÖREV 4: Engagement Metrics (Skip davranışı x müzikal karakteristik)
+          // Skip oranını danceability/acousticness ile çapraz okuyabilmek için
+          // her track_uri için tamamlanma oranı ve skip/natural-end sayıları hesaplanıyor.
+          val engagementDF = enrichedDF
+            .groupBy("track_uri")
+            .agg(
+              avg("completion_rate").as("completion_rate"),
+              sum(when(col("is_skip"), 1).otherwise(0)).as("skip_count"),
+              sum(when(!col("is_skip"), 1).otherwise(0)).as("natural_end_count")
+            )
+            .withColumn("window_start_time", current_timestamp())
+
+          engagementDF.write.mode(SaveMode.Append).jdbc(dbUrl, "engagement_metrics", dbProps)
+
+          // GÖREV 5: Mood Matrix Örneklemi (Scatter için ham valence/energy noktaları)
+          // Her micro-batch'ten en fazla 200 satır örnekleniyor; tüm ham veriyi
+          // yazmak scatter panelini gereksiz büyütür, örnekleme yeterli çözünürlüğü verir.
+          val moodMatrixSampleDF = enrichedDF
+            .select("timestamp", "track_uri", "artist_name", "valence", "energy")
+            .limit(200)
+
+          moodMatrixSampleDF.write.mode(SaveMode.Append).jdbc(dbUrl, "mood_matrix_samples", dbProps)
+
+          enrichedDF.unpersist() // RAM'i temizle
           println(s"--- Micro-Batch $batchId Başarıyla Postgres'e Aktarıldı ---")
         }
       }
