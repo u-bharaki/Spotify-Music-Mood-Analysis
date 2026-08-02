@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS mood_matrix_samples CASCADE;
 DROP TABLE IF EXISTS realtime_streaming_events CASCADE;
 DROP TABLE IF EXISTS system_metrics CASCADE;
 DROP TABLE IF EXISTS realtime_leaderboard CASCADE;
@@ -75,21 +76,6 @@ CREATE TABLE IF NOT EXISTS global_fallback_metrics (
     avg_tempo NUMERIC(7,3)
 );
 
--- YENİ: VibeStreamApp.scala bu tabloya yazıyor (enrichedDF -> realtime_streaming_events)
--- ama tabloyu tanımlayan CREATE ifadesi rapordaki şemada yoktu. Eklendi.
-CREATE TABLE IF NOT EXISTS realtime_streaming_events (
-    id SERIAL PRIMARY KEY,
-    "timestamp" TIMESTAMP NOT NULL,
-    track_uri VARCHAR(255),
-    artist_name VARCHAR(255),
-    ms_played INT,
-    energy NUMERIC(5,4),
-    valence NUMERIC(5,4),
-    danceability NUMERIC(5,4)
-);
-CREATE INDEX IF NOT EXISTS idx_events_timestamp ON realtime_streaming_events("timestamp");
-CREATE INDEX IF NOT EXISTS idx_events_track ON realtime_streaming_events(track_uri);
-
 CREATE TABLE IF NOT EXISTS realtime_mood_metrics (
     id SERIAL PRIMARY KEY,
     window_start_time TIMESTAMP NOT NULL,
@@ -111,7 +97,41 @@ CREATE TABLE IF NOT EXISTS realtime_leaderboard (
     id SERIAL PRIMARY KEY,
     window_start_time TIMESTAMP NOT NULL,
     track_uri VARCHAR(255),
+    track_name VARCHAR(255),
+    artist_name VARCHAR(255),
     play_count INT
+);
+
+-- Ham zenginleştirilmiş loglar. hour_of_day / day_of_week kolonları heatmap panelinin
+-- kaynağıdır (Superset içinde GROUP BY hour_of_day, day_of_week ile üretilir).
+CREATE TABLE IF NOT EXISTS realtime_streaming_events (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP NOT NULL,
+    track_uri VARCHAR(255),
+    track_name VARCHAR(255),
+    album_name VARCHAR(255),
+    artist_name VARCHAR(255),
+    ms_played INT,
+    energy NUMERIC(5,4),
+    valence NUMERIC(5,4),
+    danceability NUMERIC(5,4),
+    acousticness NUMERIC(5,4),
+    duration_ms BIGINT,
+    year INT,
+    completion_rate NUMERIC(5,4),
+    is_skip BOOLEAN,
+    hour_of_day INT,
+    day_of_week INT
+);
+
+-- Mood matrix (valence x energy) scatter paneli için örneklenmiş ham noktalar.
+CREATE TABLE IF NOT EXISTS mood_matrix_samples (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP NOT NULL,
+    track_uri VARCHAR(255),
+    artist_name VARCHAR(255),
+    valence NUMERIC(5,4),
+    energy NUMERIC(5,4)
 );
 
 CREATE TABLE IF NOT EXISTS system_metrics (
