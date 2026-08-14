@@ -1,0 +1,13 @@
+# Seeder, Simulator ve Superset-Init için ortak taban
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Sistem bağımlılıkları (psycopg2 vb. için gerekebilir)
+RUN apt-get update && apt-get install -y libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+
+# Projedeki tüm dosyaları (Kodlar + Datasets) imajın içine kopyala
+COPY .. /app/
+
+# Gerekli kütüphaneleri kur
+RUN pip install pandas redis kafka-python requests psycopg2-binary

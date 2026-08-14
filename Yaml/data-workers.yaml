@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vibestream-seeder
+  namespace: vibestream
+spec:
+  template:
+    spec:
+      containers:
+      - name: seeder
+        image: vibestream-workers:latest
+        imagePullPolicy: IfNotPresent
+        workingDir: "/app/Redis Feed"
+        command: ["python", "Seeder.py"]
+      restartPolicy: Never
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vibestream-simulator
+  namespace: vibestream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simulator
+  template:
+    metadata:
+      labels:
+        app: simulator
+    spec:
+      containers:
+      - name: simulator
+        image: vibestream-workers:latest
+        imagePullPolicy: Never
+        workingDir: "/app/Log Streamer"
+        # Pod uyanık kalacak ama hiçbir şey yapmayacak
+        command: ["sh", "-c", "tail -f /dev/null"]

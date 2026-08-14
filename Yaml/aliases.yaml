@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: vibestream
+spec:
+  type: ExternalName
+  externalName: vibestream-redis-master.vibestream.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: vibestream
+spec:
+  type: ExternalName
+  externalName: vibestream-postgres-postgresql.vibestream.svc.cluster.local

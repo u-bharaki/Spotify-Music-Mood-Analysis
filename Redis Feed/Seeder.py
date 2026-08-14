@@ -26,10 +26,21 @@ def seed_redis():
     r = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
     pipe = r.pipeline()
 
-    for key, value in data_to_seed.items():
+    # Paket büyüklüğünü belirliyoruz
+    BATCH_SIZE = 500
+
+    # Veriyi enumerate ile sayarak dönüyoruz
+    for i, (key, value) in enumerate(data_to_seed.items()):
+
         pipe.set(key, json.dumps(value))
 
+        # Her 500 kayıtta bir borudaki (pipe) verileri Redis'e gönderip boruyu boşaltıyoruz
+        if (i + 1) % BATCH_SIZE == 0:
+            pipe.execute()
+
+    # Döngü bittikten sonra, eğer geride 500'e tamamlanmayan son birkaç kayıt kaldıysa onları da basıyoruz
     pipe.execute()
+
     print(f"Mükemmel! {len(data_to_seed)} adet zenginleştirilmiş veri Redis'e basıldı.")
 
 
