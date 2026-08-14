@@ -27,6 +27,12 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+    # CPU çekirdek limiti: bu konteyner en fazla 1.5 çekirdek kullanabilir
+    # (Mühendislik panelindeki "CPU Çekirdek Dağılımı" grafiğinin kaynağı).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
   kafka-init:
     image: apache/kafka:latest
     container_name: vibestream-kafka-init
@@ -57,6 +63,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
 
   redis:
     image: redis:alpine
@@ -66,6 +76,10 @@ services:
     command: redis-server --save 60 1 --loglevel warning
     volumes:
       - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
 
   seeder:
     image: python:3.10-slim
@@ -117,6 +131,13 @@ services:
       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0,redis.clients:jedis:4.4.3,com.fasterxml.jackson.module:jackson-module-scala_2.12:2.15.2
       --class VibeStreamApp
       /app/target/scala-2.12/VibeStream-assembly-1.0.jar
+    # Spark "local[*]" ile konteynerin gördüğü TÜM çekirdekleri kullanmaya çalışır;
+    # bu limit onu somut bir sayıya (2 çekirdek) sabitler ki mühendislik panelindeki
+    # "kaç çekirdek fiilen Spark'a ayrılmış" bilgisi tutarlı olsun.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
 
   # YENİ: Dashboard - Apache Superset
   superset:
@@ -141,6 +162,10 @@ services:
       superset init &&
       superset run -h 0.0.0.0 -p 8088 --with-threads --reload
       "
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
 
   # YENİ: Superset açıldıktan sonra Postgres bağlantısını ve dataset'leri
   # otomatik olarak API üzerinden oluşturan tek-seferlik provisioning container'ı.
@@ -153,6 +178,37 @@ services:
       - "../Dashboards/superset:/app"
     working_dir: /app
     command: sh -c "pip install requests && python provision_superset.py"
+
+  # YENİ: Özel Streamlit Dashboard - Superset'te kurulması zor olan
+  # scatter/heatmap/leaderboard/sistem panellerini tam istenen şekilde gösterir.
+  dashboard:
+    build:
+      context: "../Dashboards/streamlit_dashboard"
+      dockerfile: "../../Docker/Dockerfile.dashboard"
+    container_name: vibestream-dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8501:8501"
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=vibe_admin
+      - PG_PASSWORD=vibe_password
+      - PG_DB=vibestream_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      # Docker konteynerlerinin canlı CPU/RAM tüketimini okuyabilmek için
+      # (Mühendislik paneli). Salt-okunur mount edilir.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
 
 volumes:
   postgres_data:
