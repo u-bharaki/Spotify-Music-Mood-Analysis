@@ -63,25 +63,59 @@ SPOTIFY_GREEN = "#1DB954"
 BG_DARK = "#121212"
 CARD_DARK = "#181818"
 
-DASHBOARD_CSS = f"""
-.dashboard-content {{ background-color: {BG_DARK} !important; }}
+GRADIENT_ACCENT = "linear-gradient(135deg, #1DB954 0%, #14B8A6 55%, #3A7BFF 100%)"
 
+# Not: bazı Superset sürümlerinde ".dashboard-content" ana canvas'ı tam
+# kaplamıyor / tema moduna göre üstüne yazılabiliyor. Bu yüzden arkaplanı
+# BİRDEN FAZLA olası seçiciye aynı anda uyguluyoruz ve her katmanda (canvas,
+# kart, tablo satırı) rengi HER ZAMAN düz/opak veriyoruz - saydamlık veya
+# "üstteki gerçek renk neyse ona güven" YOK. Böylece kartlar hangi Superset
+# temasında (açık/koyu) açılırsa açılsın hep aynı, tutarlı ve okunur görünür.
+DASHBOARD_CSS = f"""
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+/* Ana canvas: birden fazla olası kapsayıcıyı hedefleyip DÜZ (saydam
+   olmayan) koyu renk veriyoruz. */
+.dashboard-content,
+.dashboard-content .grid-container,
+.dashboard-grid,
+div[data-test="grid-content"] {{
+    background-color: {BG_DARK} !important;
+    font-family: 'Inter', sans-serif !important;
+}}
+
+/* Chart kartları: düz koyu arkaplan (saydamlık/blur YOK - altındaki
+   canvas rengi ne olursa olsun kart hep aynı görünsün). */
 .dashboard-component-chart-holder {{
+    position: relative;
     background-color: {CARD_DARK} !important;
     border: 1px solid #2a2a2a !important;
     border-radius: 14px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.35) !important;
-    padding: 4px !important;
-    margin: 6px !important;
-    transition: border-color 0.15s ease-in-out;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+    padding: 6px !important;
+    margin: 7px !important;
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }}
-.dashboard-component-chart-holder:hover {{ border-color: {SPOTIFY_GREEN}44 !important; }}
+.dashboard-component-chart-holder::before {{
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: {GRADIENT_ACCENT};
+    opacity: 0.9;
+}}
+.dashboard-component-chart-holder:hover {{
+    border-color: {SPOTIFY_GREEN}55 !important;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.45) !important;
+}}
 
-.grid-row {{ margin-bottom: 8px !important; }}
+.grid-row {{ margin-bottom: 10px !important; }}
 
 /* GENEL METİN RENGİ: koyu kart üzerinde varsayılan siyah yazı görünmez
    olduğu için TÜM chart içeriğini önce açık renge zorluyoruz. Daha
-   spesifik kurallar (başlık yeşili vb.) aşağıda bunun üzerine yazılır. */
+   spesifik kurallar (başlık gradyanı, tablo satırları vb.) aşağıda
+   bunun üzerine yazılır. */
 .dashboard-component-chart-holder,
 .dashboard-component-chart-holder * {{
     color: #e8e8e8 !important;
@@ -91,48 +125,111 @@ DASHBOARD_CSS = f"""
 .dashboard-component-chart-holder svg text {{
     fill: #e8e8e8 !important;
 }}
-/* Big Number kartındaki büyük rakam: birkaç olası class ismini birden
-   hedefliyoruz (Superset sürümüne göre değişebiliyor). */
+/* Big Number kartındaki büyük rakam: gradyan dolgulu, kalın, modern görünüm.
+   -webkit-text-fill-color desteklenmezse SPOTIFY_GREEN'e (düz renk) düşer. */
 .dashboard-component-chart-holder .header-line,
 .dashboard-component-chart-holder .text-line,
 .dashboard-component-chart-holder [class*="BigNumber"],
 .dashboard-component-chart-holder [class*="bignumber"] {{
+    background: {GRADIENT_ACCENT} !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
     color: {SPOTIFY_GREEN} !important;
     fill: {SPOTIFY_GREEN} !important;
+    font-family: 'Poppins', sans-serif !important;
+    font-weight: 700 !important;
+    line-height: 1.05 !important;
+}}
+/* Big Number altındaki açıklama metni (subtitle) taşmasın, sığmayınca kırpılsın */
+.dashboard-component-chart-holder .subheader-line {{
+    color: #b3b3b3 !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
 }}
 
 /* Chart başlıkları */
 .header-title, .editable-title input, .chart-header .header-title {{
     color: #FFFFFF !important;
+    font-family: 'Poppins', sans-serif !important;
     font-weight: 600 !important;
+    letter-spacing: 0.2px;
 }}
 .header-title {{ font-size: 15px !important; }}
 
-/* Sekme (tab) çubuğu */
+/* Sekme (tab) çubuğu: yuvarlak "pill" görünümlü modern sekmeler.
+   Genişlik/hizalama sorunlarını önlemek için sekmelerin kendi aralarında
+   eşit iç boşluk kullanmasını ve satır kaymamasını sağlıyoruz. */
+.dashboard-component-tabs .ant-tabs-nav {{
+    background-color: #1a1a1a !important;
+    border-radius: 999px !important;
+    padding: 4px !important;
+    border: 1px solid #2a2a2a !important;
+    display: inline-flex !important;
+}}
+.dashboard-component-tabs .ant-tabs-nav-list {{
+    display: flex !important;
+    flex-wrap: nowrap !important;
+}}
 .dashboard-component-tabs .ant-tabs-tab {{
     color: #b3b3b3 !important;
+    font-family: 'Poppins', sans-serif !important;
     font-weight: 500 !important;
+    border-radius: 999px !important;
+    padding: 6px 18px !important;
+    margin: 0 2px !important;
+    white-space: nowrap !important;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}}
+.dashboard-component-tabs .ant-tabs-tab:hover {{
+    color: #ffffff !important;
 }}
 .dashboard-component-tabs .ant-tabs-tab-active {{
-    color: {SPOTIFY_GREEN} !important;
+    background: {GRADIENT_ACCENT} !important;
 }}
-.dashboard-component-tabs .ant-tabs-ink-bar {{
-    background-color: {SPOTIFY_GREEN} !important;
+.dashboard-component-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {{
+    color: #05130a !important;
+    font-weight: 700 !important;
 }}
+.dashboard-component-tabs .ant-tabs-ink-bar {{ display: none !important; }}
 
-/* Tablo (Ham Veri) satırları */
-.dashboard-component-chart-holder table tr:nth-child(even) {{
-    background-color: #1c1c1c !important;
+/* Tablo (Ham Veri) satırları: DÜZ (saydam olmayan) renkler + her satırda
+   metin rengini açıkça belirtiyoruz, böylece hangi zeminin üstünde olursa
+   olsun okunmaz hale gelmiyor. */
+.dashboard-component-chart-holder table {{
+    background-color: {CARD_DARK} !important;
+}}
+.dashboard-component-chart-holder table tr {{
+    transition: background-color 0.12s ease;
+}}
+.dashboard-component-chart-holder table tr,
+.dashboard-component-chart-holder table tr td {{
+    background-color: {CARD_DARK} !important;
+    color: #e8e8e8 !important;
+}}
+.dashboard-component-chart-holder table tr:nth-child(even),
+.dashboard-component-chart-holder table tr:nth-child(even) td {{
+    background-color: #202020 !important;
+    color: #e8e8e8 !important;
+}}
+.dashboard-component-chart-holder table tr:hover,
+.dashboard-component-chart-holder table tr:hover td {{
+    background-color: #22301f !important;
 }}
 .dashboard-component-chart-holder table th {{
+    background-color: {CARD_DARK} !important;
     color: #b3b3b3 !important;
+    font-family: 'Poppins', sans-serif !important;
+    text-transform: uppercase;
+    font-size: 11px !important;
+    letter-spacing: 0.5px;
     border-bottom: 1px solid #2a2a2a !important;
 }}
 
 /* Grafik eksen çizgileri / gridline'lar çok karanlıkta kaybolmasın */
 .dashboard-component-chart-holder svg line,
 .dashboard-component-chart-holder svg path.domain {{
-    stroke: #444 !important;
+    stroke: #3a3a3a !important;
 }}
 """
 
@@ -149,11 +246,11 @@ TABS = {
         "En Çok Çalınan Şarkılar (Grafik)",
         "En Çok Çalınan Şarkılar",
         "Sanatçı Bazlı Beğenilirlik Skoru",
-        "Saatlik Skip Oranı",
     ],
     "System Health": [
-        "Saate Göre Dinleme Yoğunluğu",
+        "Saatlik Dinleme Yoğunluğu",
         "Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)",
+        "Saatlik Skip Oranı",
         "Saatlik Ortalama Tamamlama Oranı",
     ],
 }
@@ -412,6 +509,7 @@ def link_chart_to_dashboard(session, chart_id, dashboard_id):
 
 def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
     defs = {}
+    AMBER = "#F5B700"
 
     if mood_ds_id:
         defs["Zaman İçinde Ortalama Mood (Valence & Energy)"] = (
@@ -422,6 +520,10 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "groupby": [], "adhoc_filters": [], "row_limit": 1000,
                 "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
                 "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
+                "x_axis_title": "Zaman", "y_axis_title": "Ortalama Skor (0-1)",
+                "x_axis_title_margin": 20, "y_axis_title_margin": 30,
+                "label_colors": {"Avg Valence": SPOTIFY_GREEN, "Avg Energy": AMBER},
+                "line_style": "smooth", "markerEnabled": False,
             },
         )
         defs["Toplam Stream Sayısı"] = (
@@ -429,6 +531,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "metric": sql_metric("SUM(total_streams)", "Total Streams"),
                 "adhoc_filters": [], "header_font_size": 0.4, "subheader_font_size": 0.15,
                 "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
+                "subheader": "Son pencerede toplam dinleme",
             },
         )
 
@@ -438,7 +541,9 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "query_mode": "aggregate", "groupby": ["track_name", "artist_name"],
                 "metrics": [sql_metric("SUM(play_count)", "Play Count")],
                 "adhoc_filters": [], "row_limit": 15,
-                "column_config": {"Play Count": {"showCellBars": True, "d3NumberFormat": ",d"}},
+                "column_config": {
+                    "Play Count": {"showCellBars": True, "d3NumberFormat": ",d", "colorPositiveNegative": False, "alignPositiveNegative": False},
+                },
                 "table_timestamp_format": "smart_date", "time_range": "No filter",
             },
         )
@@ -447,7 +552,10 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "track_name", "metrics": [sql_metric("SUM(play_count)", "Play Count")],
                 "groupby": [], "row_limit": 10, "order_desc": True,
                 "series_limit": 10, "series_limit_metric": sql_metric("SUM(play_count)", "Play Count"),
-                "adhoc_filters": [], "show_legend": False, "color_scheme": "supersetColors",
+                "adhoc_filters": [], "show_legend": False,
+                "label_colors": {"Play Count": SPOTIFY_GREEN},
+                "x_axis_title": "Şarkı", "y_axis_title": "Çalınma Sayısı",
+                "x_axis_title_margin": 40, "y_axis_title_margin": 30,
                 "time_range": "No filter",
             },
         )
@@ -458,6 +566,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "metric": sql_metric("AVG(completion_rate)", "Ort. Tamamlama"),
                 "adhoc_filters": [], "header_font_size": 0.4, "subheader_font_size": 0.15,
                 "y_axis_format": ".0%", "time_range": "No filter",
+                "subheader": "Şarkının ne kadarı dinlendi",
             },
         )
         defs["Skip Oranı"] = (
@@ -467,6 +576,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 ),
                 "adhoc_filters": [], "header_font_size": 0.4, "subheader_font_size": 0.15,
                 "y_axis_format": ".0%", "time_range": "No filter",
+                "subheader": "Manuel olarak geçilen şarkı oranı",
             },
         )
         defs["Dinleme Yoğunluğu Isı Haritası (Saat x Gün)"] = (
@@ -475,14 +585,17 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "metric": sql_metric("COUNT(*)", "Dinleme Sayısı"),
                 "linear_color_scheme": "blue_white_yellow", "y_axis_format": "SMART_NUMBER",
                 "adhoc_filters": [], "time_range": "No filter",
+                "x_axis_title": "Saat", "y_axis_title": "Haftanın Günü",
             },
         )
-        defs["Saate Göre Dinleme Yoğunluğu"] = (
+        defs["Saatlik Dinleme Yoğunluğu"] = (
             "echarts_timeseries_bar", events_ds_id, {
                 "x_axis": "hour_of_day", "metrics": [sql_metric("COUNT(*)", "Stream Count")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "color_scheme": "supersetColors",
+                "show_legend": False, "label_colors": {"Stream Count": SPOTIFY_GREEN},
                 "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
+                "x_axis_title": "Saat (0-23)", "y_axis_title": "Dinleme Sayısı",
+                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
             },
         )
         defs["Saatlik Skip Oranı"] = (
@@ -490,7 +603,10 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "hour_of_day",
                 "metrics": [sql_metric("SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1)", "Skip Oranı")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "color_scheme": "supersetColors", "time_range": "No filter",
+                "show_legend": False, "label_colors": {"Skip Oranı": "#E74C3C"},
+                "y_axis_format": ".0%", "time_range": "No filter",
+                "x_axis_title": "Saat (0-23)", "y_axis_title": "Skip Oranı",
+                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
             },
         )
         defs["Saatlik Ortalama Tamamlama Oranı"] = (
@@ -498,7 +614,10 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "hour_of_day",
                 "metrics": [sql_metric("AVG(completion_rate)", "Ort. Tamamlama")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "color_scheme": "supersetColors", "time_range": "No filter",
+                "show_legend": False, "label_colors": {"Ort. Tamamlama": SPOTIFY_GREEN},
+                "y_axis_format": ".0%", "time_range": "No filter",
+                "x_axis_title": "Saat (0-23)", "y_axis_title": "Ort. Tamamlama Oranı",
+                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
             },
         )
         defs["Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)"] = (
@@ -506,7 +625,10 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "year", "metrics": [sql_metric("COUNT(*)", "Dinleme Sayısı")],
                 "groupby": [], "row_limit": 80,
                 "adhoc_filters": [{"clause": "WHERE", "subject": "year", "operator": ">", "comparator": "1950", "expressionType": "SIMPLE"}],
-                "show_legend": False, "color_scheme": "supersetColors", "time_range": "No filter",
+                "show_legend": False, "label_colors": {"Dinleme Sayısı": AMBER},
+                "x_axis_title": "Çıkış Yılı", "y_axis_title": "Dinleme Sayısı",
+                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
+                "time_range": "No filter",
             },
         )
         defs["Sanatçı Bazlı Beğenilirlik Skoru"] = (
@@ -521,11 +643,16 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                     "AVG(completion_rate) - (SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1))",
                     "Beğenilirlik Skoru",
                 ),
-                "adhoc_filters": [], "show_legend": False, "color_scheme": "supersetColors", "time_range": "No filter",
+                "adhoc_filters": [], "show_legend": False,
+                "label_colors": {"Beğenilirlik Skoru": SPOTIFY_GREEN},
+                "x_axis_title": "Sanatçı", "y_axis_title": "Beğenilirlik Skoru",
+                "x_axis_title_margin": 60, "y_axis_title_margin": 35,
+                "time_range": "No filter",
             },
         )
 
     return defs
+
 
 
 def main():
