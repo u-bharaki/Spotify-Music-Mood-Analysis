@@ -1,39 +1,7 @@
 """
 VibeStream - Superset otomatik provisioning script'i.
 
-Superset ayağa kalktıktan sonra bu script:
-  1. admin/admin ile login olur (Bearer token + CSRF token alır)
-  2. VibeStream Postgres veritabanı bağlantısını otomatik oluşturur
-  3. Dashboard'da kullanılacak dataset'leri otomatik oluşturur:
-     - realtime_mood_metrics
-     - realtime_leaderboard
-     - realtime_streaming_events
-  4. Bu dataset'lere dayalı 12 chart'ı otomatik oluşturur/GÜNCELLER
-  5. 3 SEKMELİ (native Superset "Tabs" layout'u) bir dashboard oluşturur,
-     chart'ları viz tipine göre akıllı boyutlandırarak ilgili sekmelere
-     otomatik yerleştirir ve koyu-tema CSS'i uygular:
-       - Mood Overview:            KPI'lar (toplam stream, tamamlama, skip)
-                                    + zaman içinde mood trendi + saat/gün ısı haritası
-       - Leaderboard & Engagement: en çok çalınan şarkılar (tablo + grafik),
-                                    sanatçı bazlı beğenilirlik, saatlik skip oranı
-       - System Health:            saatlik dinleme yoğunluğu, nostalji (yıl
-                                    dağılımı), saatlik tamamlama oranı
-
-ÖNEMLİ - İDEMPOTENT GÜNCELLEME: Script'i tekrar çalıştırdığında (örn.
-`docker compose run --rm superset-init`), chart'lar ve dashboard layout'u
-zaten var olsalar bile SİLİNMEZ, üzerlerine GÜNCELLENİR. Yani bu script'te
-değişiklik yapıp tekrar çalıştırman, mevcut dashboard'u sıfırlamadan
-sonuçları anında görmeni sağlar - `docker compose down -v` YAPMANA GEREK
-YOKTUR.
-
-Değişiklik yaptıktan sonra sonucu kontrol etmek için:
-    docker compose run --rm superset-init
-    (Superset'i tarayıcıda F5 ile yenile)
-
-Not: Chart "params" şeması Superset sürümüne göre küçük farklılıklar
-gösterebilir. Bu yüzden her chart kendi try/except'i içinde oluşturulur:
-biri başarısız olursa script durmaz, diğerlerine devam eder ve sonunda
-özet basar.
+Modernize Edilmiş Versiyon (Spotify Teması: Header ve Sekme Hataları Giderildi)
 """
 
 import json
@@ -58,75 +26,95 @@ DATASETS = [
 DASHBOARD_SLUG = "vibestream-mood"
 DASHBOARD_TITLE = "VibeStream - Mood Dashboard"
 
-# Spotify-koyu tema paleti.
+# Spotify Renk Paleti
 SPOTIFY_GREEN = "#1DB954"
-BG_DARK = "#121212"
-CARD_DARK = "#181818"
+SPOTIFY_LIGHT_GREEN = "#1ED760"
+SPOTIFY_DARK_BG = "#121212"
+SPOTIFY_CARD_BG = "#181818"
+GRADIENT_ACCENT = "linear-gradient(135deg, #1ED760 0%, #1DB954 100%)"
 
-GRADIENT_ACCENT = "linear-gradient(135deg, #1DB954 0%, #14B8A6 55%, #3A7BFF 100%)"
-
-# Not: bazı Superset sürümlerinde ".dashboard-content" ana canvas'ı tam
-# kaplamıyor / tema moduna göre üstüne yazılabiliyor. Bu yüzden arkaplanı
-# BİRDEN FAZLA olası seçiciye aynı anda uyguluyoruz ve her katmanda (canvas,
-# kart, tablo satırı) rengi HER ZAMAN düz/opak veriyoruz - saydamlık veya
-# "üstteki gerçek renk neyse ona güven" YOK. Böylece kartlar hangi Superset
-# temasında (açık/koyu) açılırsa açılsın hep aynı, tutarlı ve okunur görünür.
 DASHBOARD_CSS = f"""
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
 
-/* Ana canvas: birden fazla olası kapsayıcıyı hedefleyip DÜZ (saydam
-   olmayan) koyu renk veriyoruz. */
+/* 1. TÜM BEYAZ ARKA PLANLARI SIFIRLA (Header, Tabs ve Grid'i şeffaflaştırıyoruz) */
+body, 
+#app,
+.dashboard,
+.dashboard-page,
 .dashboard-content,
-.dashboard-content .grid-container,
 .dashboard-grid,
-div[data-test="grid-content"] {{
-    background-color: {BG_DARK} !important;
-    font-family: 'Inter', sans-serif !important;
+div[data-test="grid-content"],
+.grid-container,
+.grid-row,
+.grid-column,
+div[data-test="dashboard-component-tabs"],
+.ant-tabs,
+.ant-tabs-content,
+.ant-tabs-nav-wrap,
+.ant-tabs-nav-list,
+.background--white,
+.background--transparent,
+.dashboard-header,
+.header-with-actions,
+.dashboard-v2 {{
+    background-color: transparent !important;
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
 }}
 
-/* Chart kartları: düz koyu arkaplan (saydamlık/blur YOK - altındaki
-   canvas rengi ne olursa olsun kart hep aynı görünsün). */
+/* 2. ANA ARKA PLANI SADECE EN ALT KATMANA UYGULA */
+body {{
+    background-color: {SPOTIFY_DARK_BG} !important;
+    background-image: radial-gradient(circle at top left, #1f402b 0%, {SPOTIFY_DARK_BG} 60%, #000000 100%) !important;
+    background-attachment: fixed !important;
+    background-size: cover !important;
+}}
+
+/* Üst Header Başlığı (VibeStream - Mood Dashboard) */
+.editable-title input[type="button"], 
+.dashboard-header .editable-title input {{
+    color: #ffffff !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.5px;
+}}
+/* Header sağdaki ikon ve yazılar (Published, Admin vb.) */
+.dashboard-header .ant-tag, 
+.dashboard-header span,
+.dashboard-header button,
+.dashboard-header .anticon {{
+    color: #b3b3b3 !important;
+}}
+
+/* Superset'in en üstteki varsayılan Navbar'ını karanlık yap */
+.navbar, .top-navbar, header {{
+    background-color: #000000 !important;
+    border-bottom: 1px solid #1f402b !important;
+}}
+.navbar * {{ color: #b3b3b3 !important; }}
+
+/* 3. CAM EFEKTLİ KARTLAR */
 .dashboard-component-chart-holder {{
     position: relative;
-    background-color: {CARD_DARK} !important;
-    border: 1px solid #2a2a2a !important;
-    border-radius: 14px !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
-    padding: 6px !important;
-    margin: 7px !important;
+    background: rgba(18, 18, 18, 0.75) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+    padding: 12px !important;
+    margin: 8px !important;
     overflow: hidden;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: all 0.3s ease !important;
 }}
-.dashboard-component-chart-holder::before {{
-    content: "";
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: {GRADIENT_ACCENT};
-    opacity: 0.9;
-}}
+
 .dashboard-component-chart-holder:hover {{
-    border-color: {SPOTIFY_GREEN}55 !important;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.45) !important;
+    border-color: rgba(29, 185, 84, 0.4) !important;
+    box-shadow: 0 8px 32px rgba(29, 185, 84, 0.15) !important;
 }}
 
-.grid-row {{ margin-bottom: 10px !important; }}
-
-/* GENEL METİN RENGİ: koyu kart üzerinde varsayılan siyah yazı görünmez
-   olduğu için TÜM chart içeriğini önce açık renge zorluyoruz. Daha
-   spesifik kurallar (başlık gradyanı, tablo satırları vb.) aşağıda
-   bunun üzerine yazılır. */
-.dashboard-component-chart-holder,
-.dashboard-component-chart-holder * {{
-    color: #e8e8e8 !important;
-}}
-/* ECharts/D3 SVG metinleri "color" ile değil "fill" ile boyanır - Big
-   Number, çizgi/bar grafik eksen etiketleri bu satır olmadan siyah kalır. */
-.dashboard-component-chart-holder svg text {{
-    fill: #e8e8e8 !important;
-}}
-/* Big Number kartındaki büyük rakam: gradyan dolgulu, kalın, modern görünüm.
-   -webkit-text-fill-color desteklenmezse SPOTIFY_GREEN'e (düz renk) düşer. */
+/* KPI Rakamları: Spotify Neon Glow */
 .dashboard-component-chart-holder .header-line,
 .dashboard-component-chart-holder .text-line,
 .dashboard-component-chart-holder [class*="BigNumber"],
@@ -135,107 +123,119 @@ div[data-test="grid-content"] {{
     -webkit-background-clip: text !important;
     background-clip: text !important;
     -webkit-text-fill-color: transparent !important;
-    color: {SPOTIFY_GREEN} !important;
-    fill: {SPOTIFY_GREEN} !important;
-    font-family: 'Poppins', sans-serif !important;
-    font-weight: 700 !important;
-    line-height: 1.05 !important;
+    text-shadow: 0 0 25px rgba(30, 215, 96, 0.4) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: -1.5px;
 }}
-/* Big Number altındaki açıklama metni (subtitle) taşmasın, sığmayınca kırpılsın */
 .dashboard-component-chart-holder .subheader-line {{
-    color: #b3b3b3 !important;
-    white-space: normal !important;
-    overflow-wrap: break-word !important;
-}}
-
-/* Chart başlıkları */
-.header-title, .editable-title input, .chart-header .header-title {{
-    color: #FFFFFF !important;
-    font-family: 'Poppins', sans-serif !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.2px;
-}}
-.header-title {{ font-size: 15px !important; }}
-
-/* Sekme (tab) çubuğu: yuvarlak "pill" görünümlü modern sekmeler.
-   Genişlik/hizalama sorunlarını önlemek için sekmelerin kendi aralarında
-   eşit iç boşluk kullanmasını ve satır kaymamasını sağlıyoruz. */
-.dashboard-component-tabs .ant-tabs-nav {{
-    background-color: #1a1a1a !important;
-    border-radius: 999px !important;
-    padding: 4px !important;
-    border: 1px solid #2a2a2a !important;
-    display: inline-flex !important;
-}}
-.dashboard-component-tabs .ant-tabs-nav-list {{
-    display: flex !important;
-    flex-wrap: nowrap !important;
-}}
-.dashboard-component-tabs .ant-tabs-tab {{
-    color: #b3b3b3 !important;
-    font-family: 'Poppins', sans-serif !important;
-    font-weight: 500 !important;
-    border-radius: 999px !important;
-    padding: 6px 18px !important;
-    margin: 0 2px !important;
-    white-space: nowrap !important;
-    transition: color 0.15s ease, background-color 0.15s ease;
-}}
-.dashboard-component-tabs .ant-tabs-tab:hover {{
     color: #ffffff !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    opacity: 0.7;
 }}
-.dashboard-component-tabs .ant-tabs-tab-active {{
-    background: {GRADIENT_ACCENT} !important;
-}}
-.dashboard-component-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {{
-    color: #05130a !important;
-    font-weight: 700 !important;
-}}
-.dashboard-component-tabs .ant-tabs-ink-bar {{ display: none !important; }}
 
-/* Tablo (Ham Veri) satırları: DÜZ (saydam olmayan) renkler + her satırda
-   metin rengini açıkça belirtiyoruz, böylece hangi zeminin üstünde olursa
-   olsun okunmaz hale gelmiyor. */
-.dashboard-component-chart-holder table {{
-    background-color: {CARD_DARK} !important;
+/* 4. TABLO (ZEBRA ÇİZGİLERİ İPTAL) */
+.dashboard-component-chart-holder table,
+.dashboard-component-chart-holder .table-responsive,
+.dashboard-component-chart-holder table tbody tr,
+.dashboard-component-chart-holder .table-striped tbody tr:nth-of-type(odd),
+.dashboard-component-chart-holder .table-striped tbody tr:nth-of-type(even) {{
+    background-color: transparent !important;
+    background: transparent !important;
 }}
-.dashboard-component-chart-holder table tr {{
-    transition: background-color 0.12s ease;
+.dashboard-component-chart-holder table tbody tr:nth-child(odd) td {{
+    background-color: rgba(255, 255, 255, 0.02) !important;
+    color: #e5e7eb !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
 }}
-.dashboard-component-chart-holder table tr,
-.dashboard-component-chart-holder table tr td {{
-    background-color: {CARD_DARK} !important;
-    color: #e8e8e8 !important;
-}}
-.dashboard-component-chart-holder table tr:nth-child(even),
-.dashboard-component-chart-holder table tr:nth-child(even) td {{
-    background-color: #202020 !important;
-    color: #e8e8e8 !important;
-}}
-.dashboard-component-chart-holder table tr:hover,
-.dashboard-component-chart-holder table tr:hover td {{
-    background-color: #22301f !important;
+.dashboard-component-chart-holder table tbody tr:nth-child(even) td {{
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    color: #ffffff !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
 }}
 .dashboard-component-chart-holder table th {{
-    background-color: {CARD_DARK} !important;
-    color: #b3b3b3 !important;
-    font-family: 'Poppins', sans-serif !important;
-    text-transform: uppercase;
+    background-color: rgba(0, 0, 0, 0.4) !important;
+    color: {SPOTIFY_LIGHT_GREEN} !important;
+    font-family: 'Outfit', sans-serif !important;
     font-size: 11px !important;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid #2a2a2a !important;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    border-bottom: 1px solid rgba(29, 185, 84, 0.3) !important;
+    padding: 12px 10px !important;
+}}
+.dashboard-component-chart-holder table tr:hover td {{
+    background-color: rgba(29, 185, 84, 0.15) !important;
+    color: {SPOTIFY_LIGHT_GREEN} !important; 
 }}
 
-/* Grafik eksen çizgileri / gridline'lar çok karanlıkta kaybolmasın */
+/* Eksen Çizgileri */
 .dashboard-component-chart-holder svg line,
 .dashboard-component-chart-holder svg path.domain {{
-    stroke: #3a3a3a !important;
+    stroke: rgba(255, 255, 255, 0.03) !important;
 }}
+
+/* 5. METİNLER VE SEKME MENÜSÜ DÜZELTMELERİ */
+.dashboard-component-chart-holder,
+.dashboard-component-chart-holder * {{
+    color: #b3b3b3 !important;
+}}
+.dashboard-component-chart-holder svg text {{
+    fill: #b3b3b3 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 11px !important;
+}}
+.header-title, .editable-title input, .chart-header .header-title {{
+    color: #ffffff !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
+    letter-spacing: 0.2px;
+}}
+
+/* Sekmeler (Tabs) */
+.dashboard-component-tabs .ant-tabs-nav {{
+    background: transparent !important;
+    display: inline-flex !important;
+    margin-bottom: 20px !important;
+    padding-top: 10px !important; /* Başlıktan biraz ayırır */
+}}
+
+/* Pasif Sekmeler (Mat gri, hayalet efekti yok) */
+.dashboard-component-tabs .ant-tabs-tab {{
+    color: #8b8b8b !important; /* Kesinlikle beyaz değil, mat gri */
+    background: rgba(255, 255, 255, 0.05) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 500 !important;
+    border-radius: 32px !important; 
+    padding: 8px 24px !important;
+    margin: 0 6px !important;
+    border: none !important;
+    text-shadow: none !important; /* Beyaz bulanıklığı yok et */
+    transition: all 0.2s ease !important;
+}}
+
+/* Pasif Sekme Hover Durumu */
+.dashboard-component-tabs .ant-tabs-tab:hover {{
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: #ffffff !important; 
+}}
+
+/* Aktif Sekme (Neon Yeşil) */
+.dashboard-component-tabs .ant-tabs-tab-active {{
+    background: {SPOTIFY_LIGHT_GREEN} !important;
+    box-shadow: 0 4px 15px rgba(30, 215, 96, 0.3) !important;
+}}
+.dashboard-component-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {{
+    color: #000000 !important; /* Yazısı simsiyah */
+    font-weight: 700 !important;
+    text-shadow: none !important;
+}}
+.dashboard-component-tabs .ant-tabs-ink-bar {{ display: none !important; }}
 """
 
-# Sekme adı -> o sekmeye konacak chart adlarının sırası.
 TABS = {
-    "Mood Overview": [
+    "Overview & KPI": [
         "Toplam Stream Sayısı",
         "Ortalama Tamamlama Oranı",
         "Skip Oranı",
@@ -247,7 +247,7 @@ TABS = {
         "En Çok Çalınan Şarkılar",
         "Sanatçı Bazlı Beğenilirlik Skoru",
     ],
-    "System Health": [
+    "System Health & Trends": [
         "Saatlik Dinleme Yoğunluğu",
         "Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)",
         "Saatlik Skip Oranı",
@@ -255,9 +255,8 @@ TABS = {
     ],
 }
 
-# viz_type -> (genişlik /12, yükseklik). Akıllı yerleşim için.
 DIMS = {
-    "big_number_total": (4, 42),
+    "big_number_total": (4, 38), 
     "echarts_timeseries_line": (12, 62),
     "heatmap_v2": (12, 62),
     "echarts_timeseries_bar": (6, 56),
@@ -365,8 +364,6 @@ def sql_metric(expr, label):
 
 
 def create_chart(session, name, viz_type, datasource_id, params):
-    """Chart zaten varsa GÜNCELLER (skip etmez) - böylece script'i tekrar
-    çalıştırmak her zaman en güncel tanımı yansıtır."""
     full_params = {"datasource": f"{datasource_id}__table", "viz_type": viz_type, **params}
     payload = {
         "slice_name": name,
@@ -381,7 +378,7 @@ def create_chart(session, name, viz_type, datasource_id, params):
         if existing_id:
             resp = session.put(f"{SUPERSET_URL}/api/v1/chart/{existing_id}", json=payload)
             if resp.status_code >= 400:
-                print(f"  [UYARI] Chart '{name}' güncellenemedi (id={existing_id}): {resp.status_code} {resp.text[:250]}")
+                print(f"  [UYARI] Chart '{name}' güncellenemedi: {resp.status_code} {resp.text[:250]}")
                 return existing_id
             print(f"  Chart '{name}' güncellendi (id={existing_id}).")
             return existing_id
@@ -399,10 +396,6 @@ def create_chart(session, name, viz_type, datasource_id, params):
 
 
 def build_tabbed_position_json(tabs_with_charts):
-    """tabs_with_charts: [(tab_title, [(chart_id, chart_name, viz_type), ...]), ...]
-    Her chart'ı viz_type'ına göre farklı genişlik/yükseklikte yerleştirir ve
-    bin-packing ile satırlara otomatik diziyor (KPI kutuları yan yana,
-    bar grafikler ikili, tablo/line/heatmap tam genişlik)."""
     root_id = "ROOT_ID"
     grid_id = "GRID_ID"
     tabs_id = "TABS-vibestream"
@@ -423,7 +416,6 @@ def build_tabbed_position_json(tabs_with_charts):
             "meta": {"text": title, "defaultText": title, "placeholder": title},
         }
 
-        # --- Bin packing: chart'ları 12 kolonluk satırlara diz ---
         rows, current_row, current_width = [], [], 0
         for chart_id, chart_name, viz_type in charts:
             width, height = DIMS.get(viz_type, DEFAULT_DIM)
@@ -484,17 +476,37 @@ def create_or_get_dashboard(session):
 
 def apply_dashboard_layout(session, dashboard_id, tabs_with_charts):
     position_json = build_tabbed_position_json(tabs_with_charts)
-    payload = {"position_json": json.dumps(position_json), "css": DASHBOARD_CSS}
+    
+    # Superset'in grafik renklerini ezip global olarak Spotify yeşiline zorluyoruz
+    # VE OTOMATİK YENİLEME (Auto-Refresh) EKLIYORUZ
+    json_metadata = {
+        "label_colors": {
+            "Play Count": SPOTIFY_GREEN,
+            "Stream Count": SPOTIFY_GREEN,
+            "Dinleme Sayısı": SPOTIFY_LIGHT_GREEN,
+            "Skip Oranı": SPOTIFY_GREEN,
+            "Ort. Tamamlama": SPOTIFY_GREEN,
+            "Beğenilirlik Skoru": SPOTIFY_GREEN
+        },
+        "color_scheme": "supersetColors",
+        "refresh_frequency": 5  # <--- EKLENEN SATIR: Dashboard her 5 saniyede bir otomatik güncellenecek
+    }
+
+    payload = {
+        "position_json": json.dumps(position_json), 
+        "css": DASHBOARD_CSS,
+        "json_metadata": json.dumps(json_metadata)
+    }
+    
     resp = session.put(f"{SUPERSET_URL}/api/v1/dashboard/{dashboard_id}", json=payload)
     if resp.status_code >= 400:
         print("Dashboard layout/CSS güncellenemedi:", resp.status_code, resp.text[:400])
         return False
-    print("Sekmeler, chart yerleşimi ve koyu tema CSS'i dashboard'a uygulandı.")
+    print("Sekmeler, chart yerleşimi, global renkler, otomatik yenileme ve koyu tema CSS'i dashboard'a uygulandı.")
     return True
 
 
 def link_chart_to_dashboard(session, chart_id, dashboard_id):
-    """Chart'ın 'dashboards' ilişkisini günceller (zaten bağlıysa dokunmaz)."""
     try:
         resp = session.get(f"{SUPERSET_URL}/api/v1/chart/{chart_id}")
         current_dash_ids = [d["id"] for d in resp.json().get("result", {}).get("dashboards", [])]
@@ -505,11 +517,12 @@ def link_chart_to_dashboard(session, chart_id, dashboard_id):
         print(f"  [UYARI] Chart id={chart_id} dashboard'a bağlanamadı: {e}")
 
 
-# --- Chart tanımları -------------------------------------------------------
-
 def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
     defs = {}
-    AMBER = "#F5B700"
+    
+    COLOR_MAIN = SPOTIFY_GREEN
+    COLOR_SECONDARY = SPOTIFY_LIGHT_GREEN
+    COLOR_CONTRAST = "#ffffff"  
 
     if mood_ds_id:
         defs["Zaman İçinde Ortalama Mood (Valence & Energy)"] = (
@@ -520,10 +533,9 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "groupby": [], "adhoc_filters": [], "row_limit": 1000,
                 "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
                 "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
-                "x_axis_title": "Zaman", "y_axis_title": "Ortalama Skor (0-1)",
-                "x_axis_title_margin": 20, "y_axis_title_margin": 30,
-                "label_colors": {"Avg Valence": SPOTIFY_GREEN, "Avg Energy": AMBER},
-                "line_style": "smooth", "markerEnabled": False,
+                "x_axis_title": "", "y_axis_title": "",
+                "label_colors": {"Avg Valence": COLOR_MAIN, "Avg Energy": COLOR_CONTRAST},
+                "line_style": "smooth", "show_area_chart": True, "opacity": 0.15, "markerEnabled": False,
             },
         )
         defs["Toplam Stream Sayısı"] = (
@@ -553,9 +565,8 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "groupby": [], "row_limit": 10, "order_desc": True,
                 "series_limit": 10, "series_limit_metric": sql_metric("SUM(play_count)", "Play Count"),
                 "adhoc_filters": [], "show_legend": False,
-                "label_colors": {"Play Count": SPOTIFY_GREEN},
-                "x_axis_title": "Şarkı", "y_axis_title": "Çalınma Sayısı",
-                "x_axis_title_margin": 40, "y_axis_title_margin": 30,
+                "label_colors": {"Play Count": COLOR_MAIN},
+                "x_axis_title": "", "y_axis_title": "",
                 "time_range": "No filter",
             },
         )
@@ -583,19 +594,18 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
             "heatmap_v2", events_ds_id, {
                 "x_axis": "hour_of_day", "groupby": "day_of_week",
                 "metric": sql_metric("COUNT(*)", "Dinleme Sayısı"),
-                "linear_color_scheme": "blue_white_yellow", "y_axis_format": "SMART_NUMBER",
+                "linear_color_scheme": "greens", "y_axis_format": "SMART_NUMBER", 
                 "adhoc_filters": [], "time_range": "No filter",
-                "x_axis_title": "Saat", "y_axis_title": "Haftanın Günü",
+                "x_axis_title": "", "y_axis_title": "",
             },
         )
         defs["Saatlik Dinleme Yoğunluğu"] = (
             "echarts_timeseries_bar", events_ds_id, {
                 "x_axis": "hour_of_day", "metrics": [sql_metric("COUNT(*)", "Stream Count")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "label_colors": {"Stream Count": SPOTIFY_GREEN},
+                "show_legend": False, "label_colors": {"Stream Count": COLOR_SECONDARY},
                 "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
-                "x_axis_title": "Saat (0-23)", "y_axis_title": "Dinleme Sayısı",
-                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
+                "x_axis_title": "", "y_axis_title": "",
             },
         )
         defs["Saatlik Skip Oranı"] = (
@@ -603,10 +613,9 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "hour_of_day",
                 "metrics": [sql_metric("SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1)", "Skip Oranı")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "label_colors": {"Skip Oranı": "#E74C3C"},
+                "show_legend": False, "label_colors": {"Skip Oranı": COLOR_MAIN},
                 "y_axis_format": ".0%", "time_range": "No filter",
-                "x_axis_title": "Saat (0-23)", "y_axis_title": "Skip Oranı",
-                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
+                "x_axis_title": "", "y_axis_title": "",
             },
         )
         defs["Saatlik Ortalama Tamamlama Oranı"] = (
@@ -614,10 +623,9 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "hour_of_day",
                 "metrics": [sql_metric("AVG(completion_rate)", "Ort. Tamamlama")],
                 "groupby": [], "row_limit": 24, "adhoc_filters": [],
-                "show_legend": False, "label_colors": {"Ort. Tamamlama": SPOTIFY_GREEN},
+                "show_legend": False, "label_colors": {"Ort. Tamamlama": COLOR_MAIN},
                 "y_axis_format": ".0%", "time_range": "No filter",
-                "x_axis_title": "Saat (0-23)", "y_axis_title": "Ort. Tamamlama Oranı",
-                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
+                "x_axis_title": "", "y_axis_title": "",
             },
         )
         defs["Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)"] = (
@@ -625,9 +633,8 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                 "x_axis": "year", "metrics": [sql_metric("COUNT(*)", "Dinleme Sayısı")],
                 "groupby": [], "row_limit": 80,
                 "adhoc_filters": [{"clause": "WHERE", "subject": "year", "operator": ">", "comparator": "1950", "expressionType": "SIMPLE"}],
-                "show_legend": False, "label_colors": {"Dinleme Sayısı": AMBER},
-                "x_axis_title": "Çıkış Yılı", "y_axis_title": "Dinleme Sayısı",
-                "x_axis_title_margin": 25, "y_axis_title_margin": 35,
+                "show_legend": False, "label_colors": {"Dinleme Sayısı": COLOR_SECONDARY},
+                "x_axis_title": "", "y_axis_title": "",
                 "time_range": "No filter",
             },
         )
@@ -644,15 +651,13 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
                     "Beğenilirlik Skoru",
                 ),
                 "adhoc_filters": [], "show_legend": False,
-                "label_colors": {"Beğenilirlik Skoru": SPOTIFY_GREEN},
-                "x_axis_title": "Sanatçı", "y_axis_title": "Beğenilirlik Skoru",
-                "x_axis_title_margin": 60, "y_axis_title_margin": 35,
+                "label_colors": {"Beğenilirlik Skoru": COLOR_MAIN},
+                "x_axis_title": "", "y_axis_title": "",
                 "time_range": "No filter",
             },
         )
 
     return defs
-
 
 
 def main():
@@ -705,7 +710,6 @@ def main():
     print(f"'{DASHBOARD_TITLE}' -> {SUPERSET_URL}/superset/dashboard/{DASHBOARD_SLUG}/")
     print("\nBir sonraki değişiklikten sonra kontrol etmek için:")
     print("  docker compose run --rm superset-init")
-    print("  (sonra tarayıcıda dashboard sayfasını F5 ile yenile)")
 
 
 if __name__ == "__main__":
