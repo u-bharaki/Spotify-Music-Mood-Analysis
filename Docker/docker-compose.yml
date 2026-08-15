@@ -131,8 +131,10 @@ services:
       - "8088:8088"
     environment:
       - SUPERSET_SECRET_KEY=vibestream_super_secret_key_change_me
+      - SUPERSET_CONFIG_PATH=/app/pythonpath/superset_config.py
     volumes:
       - superset_home:/app/superset_home
+      - ./superset_config.py:/app/pythonpath/superset_config.py
     command: >
       sh -c "
       pip install psycopg2-binary &&
