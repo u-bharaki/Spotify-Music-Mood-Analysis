@@ -21,6 +21,7 @@ DATASETS = [
     "realtime_mood_metrics",
     "realtime_leaderboard",
     "realtime_streaming_events",
+    "system_metrics",
 ]
 
 DASHBOARD_SLUG = "vibestream-mood"
@@ -252,6 +253,11 @@ TABS = {
         "Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)",
         "Saatlik Skip Oranı",
         "Saatlik Ortalama Tamamlama Oranı",
+    ],
+    "Mühendislik Paneli": [
+        "Anlık Veri Akış Hızı (Events/sec)",
+        "Cluster CPU Kullanımı (Pod Bazlı)",
+        "HPA Replica Sayısı (Zaman İçinde)",
     ],
 }
 
@@ -517,7 +523,7 @@ def link_chart_to_dashboard(session, chart_id, dashboard_id):
         print(f"  [UYARI] Chart id={chart_id} dashboard'a bağlanamadı: {e}")
 
 
-def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
+def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id):
     defs = {}
     
     COLOR_MAIN = SPOTIFY_GREEN
@@ -657,6 +663,55 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id):
             },
         )
 
+    # --- Mühendislik Paneli --------------------------------------------
+    # "Anlık Veri Akış Hızı": Kafka'ya hiç bağlanmadan, doğrudan Postgres'e
+    # yazılan olayların zaman damgasından hesaplanır - ek altyapı gerekmez.
+    if events_ds_id:
+        defs["Anlık Veri Akış Hızı (Events/sec)"] = (
+            "echarts_timeseries_bar", events_ds_id, {
+                "x_axis": "timestamp", "time_grain_sqla": "PT1M",
+                "metrics": [sql_metric("COUNT(*)", "Olay Sayısı")],
+                "groupby": [], "row_limit": 500, "adhoc_filters": [],
+                "show_legend": False, "label_colors": {"Olay Sayısı": COLOR_MAIN},
+                "x_axis_title": "Zaman (dakikalık)", "y_axis_title": "Olay/Dakika",
+                "time_range": "Last day",
+            },
+        )
+
+    # "Cluster CPU Kullanımı" ve "HPA Replica Sayısı": Kubernetes ekibinin
+    # `collect_cluster_metrics.py` script'i ile system_metrics tablosuna
+    # yazdığı veriye dayanır. O script çalışmadan bu iki chart boş görünür
+    # (bu normal - K8s tarafı henüz bağlanmamış demektir).
+    if system_ds_id:
+        defs["Cluster CPU Kullanımı (Pod Bazlı)"] = (
+            "echarts_timeseries_bar", system_ds_id, {
+                "x_axis": "pod_name",
+                "metrics": [sql_metric("AVG(cpu_millicores)", "CPU (millicore)")],
+                "groupby": [], "row_limit": 20, "adhoc_filters": [],
+                "show_legend": False, "label_colors": {"CPU (millicore)": COLOR_SECONDARY},
+                "x_axis_title": "Pod", "y_axis_title": "CPU (millicore)",
+                # Sadece son 15 dakikadaki ölçümleri göster (canlı anlık görüntü) -
+                # Superset'in kendi zaman aralığı filtresi ile, geçersiz SQL fonksiyonu değil.
+                "time_range": "Last 15 minutes",
+            },
+        )
+        defs["HPA Replica Sayısı (Zaman İçinde)"] = (
+            "echarts_timeseries_line", system_ds_id, {
+                "x_axis": "timestamp", "x_axis_sort_asc": True,
+                "x_axis_time_format": "smart_date", "time_grain_sqla": "PT1M",
+                "metrics": [
+                    sql_metric("MAX(hpa_current_replicas)", "Aktif Pod Sayısı"),
+                    sql_metric("MAX(hpa_desired_replicas)", "Hedef Pod Sayısı"),
+                ],
+                "groupby": [], "adhoc_filters": [], "row_limit": 1000,
+                "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
+                "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
+                "x_axis_title": "Zaman", "y_axis_title": "Pod Sayısı",
+                "label_colors": {"Aktif Pod Sayısı": COLOR_MAIN, "Hedef Pod Sayısı": COLOR_CONTRAST},
+                "line_style": "smooth", "markerEnabled": True,
+            },
+        )
+
     return defs
 
 
@@ -676,6 +731,7 @@ def main():
         mood_ds_id=dataset_ids.get("realtime_mood_metrics"),
         leaderboard_ds_id=dataset_ids.get("realtime_leaderboard"),
         events_ds_id=dataset_ids.get("realtime_streaming_events"),
+        system_ds_id=dataset_ids.get("system_metrics"),
     )
 
     print("\n=== CHART'LAR OLUŞTURULUYOR/GÜNCELLENİYOR ===")

@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS mood_matrix_samples (
 CREATE TABLE IF NOT EXISTS system_metrics (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Kafka / ingestion tarafı (Streamlit + Superset ikisi de kullanabilir):
     events_per_second INT,
-    spark_processing_delay_ms INT
+    spark_processing_delay_ms INT,
+    -- Kubernetes cluster kaynak tüketimi + HPA tarafı (K8s ekibi bu kolonları
+    -- doldurur; her satır tek bir pod'un o anki ölçümünü temsil eder, bu
+    -- yüzden replica sayısı arttığında yeni satırlar eklenir, kolon eklenmez):
+    pod_name VARCHAR(100),
+    cpu_millicores INT,          -- örn. 350 = 0.35 çekirdek
+    memory_mb INT,
+    hpa_current_replicas INT,
+    hpa_desired_replicas INT,
+    hpa_target_cpu_percent INT
 );
