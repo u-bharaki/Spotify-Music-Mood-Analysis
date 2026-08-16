@@ -15,7 +15,7 @@ USERNAME = "admin"
 PASSWORD = "admin"
 
 DB_NAME = "VibeStream-Postgres"
-SQLALCHEMY_URI = "postgresql+psycopg2://vibe_admin:vibe_password@postgres:5432/vibestream_db"
+SQLALCHEMY_URI = "postgresql+psycopg2://vibe_admin:vibe_password@vibestream-postgres:5432/vibestream_db"
 
 DATASETS = [
     "realtime_mood_metrics",

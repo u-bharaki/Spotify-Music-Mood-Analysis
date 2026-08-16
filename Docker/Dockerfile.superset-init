@@ -1,0 +1,5 @@
+FROM python:3.10-slim
+WORKDIR /app
+# API kurucu python scriptini kopyalıyoruz
+COPY ["Dashboards/superset/provision_superset.py", "/app/"]
+RUN pip install requests

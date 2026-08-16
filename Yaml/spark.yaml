@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vibestream-spark
+  namespace: vibestream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark
+  template:
+    metadata:
+      labels:
+        app: spark
+    spec:
+      # YENI: Ana uygulamadan once calisip isi bitiren hazirlik konteyneri (kafka-init)
+      initContainers:
+      - name: kafka-init
+        image: apache/kafka:latest
+        command:
+        - sh
+        - -c
+        - "/opt/kafka/bin/kafka-topics.sh --create --topic vibestream_logs --partitions 1 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists"
+
+      # ASIL UYGULAMA: initContainer basariyla kapanmadan bu asama asla baslamaz
+      containers:
+      - name: spark
+        image: vibestream-spark:latest
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: "2.0" # Docker Compose'da Spark icin belirledigin islemci limiti[cite: 1]

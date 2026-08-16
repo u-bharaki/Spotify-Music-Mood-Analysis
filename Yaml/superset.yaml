@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vibestream-superset
+  namespace: vibestream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: superset
+  template:
+    metadata:
+      labels:
+        app: superset
+    spec:
+      containers:
+      - name: superset
+        image: vibestream-superset:v2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8088
+        env:
+        - name: SUPERSET_SECRET_KEY
+          value: "vibestream_super_secret_key_change_me"
+        - name: SUPERSET_CONFIG_PATH
+          value: "/opt/superset_config.py"
+        command: ["sh", "-c"]
+        args:
+        - "ls -la /opt/superset_config.py && pip install psycopg2-binary && superset db upgrade && superset fab create-admin --username admin --firstname Admin --lastname Admin --email admin@vibestream.com --password admin && superset init && superset run -h 0.0.0.0 -p 8088 --with-threads --reload"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: superset
+  namespace: vibestream
+spec:
+  selector:
+    app: superset
+  ports:
+    - protocol: TCP
+      port: 8088
+      targetPort: 8088
+  type: LoadBalancer
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vibestream-superset-init
+  namespace: vibestream
+spec:
+  template:
+    spec:
+      containers:
+      - name: superset-init
+        image: vibestream-superset-init:v2
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "Gerekli kutuphaneler kuruluyor..."
+            pip install psycopg2-binary requests
+            python -u -c"
+            import psycopg2
+            import time
+            db_url = 'postgresql://vibe_admin:vibe_password@postgres:5432/vibestream_db'
+            while True:
+                try:
+                    with psycopg2.connect(db_url) as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(\"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'realtime_mood_metrics');\")
+                            if cur.fetchone()[0]:
+                                print('\n[BASARILI] Spark tablolari olusturmus! Superset ayarlari basliyor...\n')
+                                break
+                            else:
+                                print('[BEKLENIYOR] Spark henuz tablolari basmadi. 5 saniye sonra tekrar kontrol edilecek...')
+                except Exception as e:
+                    print('[BEKLENIYOR] Postgres henuz hazir degil veya ulasilamiyor...')
+                time.sleep(5)
+            "
+            python provision_superset.py
+      restartPolicy: OnFailure
