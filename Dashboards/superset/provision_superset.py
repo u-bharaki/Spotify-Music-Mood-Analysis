@@ -22,6 +22,7 @@ DATASETS = [
     "realtime_leaderboard",
     "realtime_streaming_events",
     "system_metrics",
+    "partition_core_metrics",
 ]
 
 DASHBOARD_SLUG = "vibestream-mood"
@@ -256,6 +257,7 @@ TABS = {
     ],
     "Mühendislik Paneli": [
         "Anlık Veri Akış Hızı (Events/sec)",
+        "Partition -> CPU Çekirdek Dağılımı",
         "Cluster CPU Kullanımı (Pod Bazlı)",
         "HPA Replica Sayısı (Zaman İçinde)",
     ],
@@ -339,10 +341,23 @@ def get_dataset_id(session, table_name):
     return result[0]["id"] if result else None
 
 
+def refresh_dataset_columns(session, ds_id):
+    # Spark tarafında yeni bir fiziksel kolon eklendiğinde (örn. time_bucket_20s),
+    # Superset'in bunu x_axis/metric olarak kullanabilmesi için dataset'in kolon
+    # şemasını tablodan yeniden okuması gerekiyor. create_dataset zaten var olan
+    # bir dataset'i atladığı için bu adım olmadan yeni kolon hiç görünmez.
+    resp = session.put(f"{SUPERSET_URL}/api/v1/dataset/{ds_id}/refresh")
+    if resp.status_code >= 400:
+        print(f"Dataset id={ds_id} kolon yenileme başarısız:", resp.status_code, resp.text)
+    else:
+        print(f"Dataset id={ds_id} kolonları tablodan yenilendi.")
+
+
 def create_dataset(session, database_id, table_name):
     existing_id = get_dataset_id(session, table_name)
     if existing_id:
-        print(f"Dataset '{table_name}' zaten var (id={existing_id}), atlanıyor.")
+        print(f"Dataset '{table_name}' zaten var (id={existing_id}), kolonlar yenileniyor.")
+        refresh_dataset_columns(session, existing_id)
         return existing_id
 
     payload = {"database": database_id, "schema": "public", "table_name": table_name}
@@ -352,6 +367,7 @@ def create_dataset(session, database_id, table_name):
         return None
     ds_id = resp.json()["id"]
     print(f"Dataset '{table_name}' oluşturuldu (id={ds_id}).")
+    refresh_dataset_columns(session, ds_id)
     return ds_id
 
 
@@ -492,7 +508,19 @@ def apply_dashboard_layout(session, dashboard_id, tabs_with_charts):
             "Dinleme Sayısı": SPOTIFY_LIGHT_GREEN,
             "Skip Oranı": SPOTIFY_GREEN,
             "Ort. Tamamlama": SPOTIFY_GREEN,
-            "Beğenilirlik Skoru": SPOTIFY_GREEN
+            "Beğenilirlik Skoru": SPOTIFY_GREEN,
+            # Not: bu sözlükte olmayan bir metrik etiketi, dashboard'un
+            # "color_scheme" (supersetColors) varsayılan paletine düşer ve o
+            # palet maviyle başlar - "Olay Sayısı" ve "CPU (millicore)" bu
+            # yüzden chart bazında COLOR_MAIN/COLOR_SECONDARY ayarlanmış
+            # olsa bile mavi görünüyordu. Dashboard seviyesindeki bu sözlük
+            # chart bazlı ayarı ezdiği için her yeni metrik etiketini buraya
+            # da eklemek gerekiyor.
+            "Olay Sayısı": SPOTIFY_GREEN,
+            "CPU (millicore)": SPOTIFY_LIGHT_GREEN,
+            "Aktif Pod Sayısı": SPOTIFY_GREEN,
+            "Hedef Pod Sayısı": "#ffffff",
+            "Kayıt Sayısı": SPOTIFY_LIGHT_GREEN,
         },
         "color_scheme": "supersetColors",
         "refresh_frequency": 5  # <--- EKLENEN SATIR: Dashboard her 5 saniyede bir otomatik güncellenecek
@@ -523,7 +551,7 @@ def link_chart_to_dashboard(session, chart_id, dashboard_id):
         print(f"  [UYARI] Chart id={chart_id} dashboard'a bağlanamadı: {e}")
 
 
-def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id):
+def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partition_ds_id=None):
     defs = {}
     
     COLOR_MAIN = SPOTIFY_GREEN
@@ -607,31 +635,38 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id):
         )
         defs["Saatlik Dinleme Yoğunluğu"] = (
             "echarts_timeseries_bar", events_ds_id, {
-                "x_axis": "hour_of_day", "metrics": [sql_metric("COUNT(*)", "Stream Count")],
-                "groupby": [], "row_limit": 24, "adhoc_filters": [],
+                # hour_of_day yerine time_bucket_20s: veri artık "hour_of_day"a
+                # göre değil, 20 saniyelik gerçek zaman dilimlerine göre
+                # gruplanıyor -> "son 20sn, ondan önceki 20sn, ..." şeklinde
+                # canlı bir akış görünümü.
+                "x_axis": "time_bucket_20s", "metrics": [sql_metric("COUNT(*)", "Stream Count")],
+                "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Stream Count": COLOR_SECONDARY},
-                "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
-                "x_axis_title": "", "y_axis_title": "",
+                "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
+                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
         defs["Saatlik Skip Oranı"] = (
             "echarts_timeseries_bar", events_ds_id, {
-                "x_axis": "hour_of_day",
+                "x_axis": "time_bucket_20s",
                 "metrics": [sql_metric("SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1)", "Skip Oranı")],
-                "groupby": [], "row_limit": 24, "adhoc_filters": [],
+                "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Skip Oranı": COLOR_MAIN},
-                "y_axis_format": ".0%", "time_range": "No filter",
-                "x_axis_title": "", "y_axis_title": "",
+                "y_axis_format": ".0%", "time_range": "Last 20 minutes",
+                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
         defs["Saatlik Ortalama Tamamlama Oranı"] = (
             "echarts_timeseries_bar", events_ds_id, {
-                "x_axis": "hour_of_day",
+                "x_axis": "time_bucket_20s",
                 "metrics": [sql_metric("AVG(completion_rate)", "Ort. Tamamlama")],
-                "groupby": [], "row_limit": 24, "adhoc_filters": [],
+                "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Ort. Tamamlama": COLOR_MAIN},
-                "y_axis_format": ".0%", "time_range": "No filter",
-                "x_axis_title": "", "y_axis_title": "",
+                "y_axis_format": ".0%", "time_range": "Last 20 minutes",
+                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
         defs["Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)"] = (
@@ -675,6 +710,24 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id):
                 "show_legend": False, "label_colors": {"Olay Sayısı": COLOR_MAIN},
                 "x_axis_title": "Zaman (dakikalık)", "y_axis_title": "Olay/Dakika",
                 "time_range": "Last day",
+            },
+        )
+
+    # "Partition -> CPU Çekirdek Dağılımı": VibeStreamApp.scala her micro-batch'te
+    # hangi Kafka partition'ının hangi JVM thread'inde (local[*] modunda thread =
+    # çekirdek) işlendiğini partition_core_metrics tablosuna yazar. Kafka topic'i
+    # artık 4 partition ile oluşturuluyor (bkz. docker-compose.yml), böylece
+    # local[*] birden fazla çekirdeğe gerçekten iş dağıtabiliyor.
+    if partition_ds_id:
+        defs["Partition -> CPU Çekirdek Dağılımı"] = (
+            "echarts_timeseries_bar", partition_ds_id, {
+                "x_axis": "thread_name",
+                "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
+                "groupby": ["partition_id"], "row_limit": 100, "adhoc_filters": [],
+                "show_legend": True, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
+                "x_axis_title": "CPU Thread (Çekirdek)", "y_axis_title": "İşlenen Kayıt Sayısı",
+                # Son 15 dakikadaki dağılımı göster - eski batch'ler ekranı kalabalıklaştırmasın.
+                "time_range": "Last 15 minutes",
             },
         )
 
@@ -732,6 +785,7 @@ def main():
         leaderboard_ds_id=dataset_ids.get("realtime_leaderboard"),
         events_ds_id=dataset_ids.get("realtime_streaming_events"),
         system_ds_id=dataset_ids.get("system_metrics"),
+        partition_ds_id=dataset_ids.get("partition_core_metrics"),
     )
 
     print("\n=== CHART'LAR OLUŞTURULUYOR/GÜNCELLENİYOR ===")

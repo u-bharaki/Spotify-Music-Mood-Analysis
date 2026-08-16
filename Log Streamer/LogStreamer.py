@@ -1,6 +1,7 @@
 import os
 import time
 import json
+from datetime import datetime
 import pandas as pd
 from kafka import KafkaProducer
 import redis
@@ -37,11 +38,11 @@ def start_streaming():
 
             log_dict = row.to_dict()
 
-            if pd.isna(log_dict.get('ts')):
-                print("Timestamp bulunamadı, kayıt atlanıyor.")
-                continue
-
-            log_dict['ts'] = str(log_dict['ts'])
+            # CSV'deki eski (geçmiş) tarihi kullanmıyoruz - her olay Kafka'ya
+            # gönderildiği ANDAKİ gerçek zamanla damgalanıyor. Böylece
+            # dashboard'daki "20 saniyelik dilim" grafikleri gerçekten
+            # "şimdi" ile "az önce" arasındaki canlı akışı yansıtıyor.
+            log_dict['ts'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             producer.send(
                 'vibestream_logs',
