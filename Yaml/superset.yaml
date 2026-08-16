@@ -53,7 +53,7 @@ spec:
       containers:
       - name: superset-init
         image: vibestream-superset-init:v2
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         command: ["sh", "-c"]
         args:
           - |
