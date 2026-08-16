@@ -90,7 +90,7 @@ services:
     volumes:
       - ../:/app
     working_dir: "/app/Log Streamer"
-    command: sh -c "pip install pandas kafka-python redis && tail -f /dev/null"
+    command: sh -c "pip install pandas kafka-python redis && python LogStreamer.py"
 
   # YENİ: Spark Streaming servisi eksikti. VibeStreamApp.scala'yı derleyip çalıştırır.
   # "Spark Streaming" klasöründe `sbt assembly` ile fat-jar üretildiğini varsayar
