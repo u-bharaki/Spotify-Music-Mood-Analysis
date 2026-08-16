@@ -47,6 +47,63 @@ object VibeStreamApp {
     dbProps.put("password", "vibe_password")
     dbProps.put("driver", "org.postgresql.Driver")
 
+// --- TABLOLARI ZORLA OLUŞTURMA HİLESİ (DUMMY DATAFRAME) ---
+    println("Postgres tablolari onceden hazirlaniyor...")
+
+    val dummySchema = new StructType()
+      .add("timestamp", TimestampType)
+      .add("track_uri", StringType)
+      .add("track_name", StringType)
+      .add("album_name", StringType)
+      .add("artist_name", StringType)
+      .add("ms_played", IntegerType)
+      .add("energy", DoubleType)
+      .add("valence", DoubleType)
+      .add("danceability", DoubleType)
+      .add("acousticness", DoubleType)
+      .add("duration_ms", LongType)
+      .add("year", IntegerType)
+      .add("completion_rate", DoubleType)
+      .add("is_skip", BooleanType)
+      .add("hour_of_day", IntegerType)
+      .add("day_of_week", IntegerType)
+
+    val emptyDF = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], dummySchema)
+
+    // 1. realtime_streaming_events (Ana Tablo)
+    emptyDF.write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_streaming_events", dbProps)
+
+    // 2. realtime_leaderboard (Gruplanmis)
+    emptyDF.groupBy("track_uri").agg(
+      first("track_name").as("track_name"),
+      first("artist_name").as("artist_name"),
+      count("*").as("play_count")
+    ).withColumn("window_start_time", current_timestamp())
+      .write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_leaderboard", dbProps)
+
+    // 3. realtime_mood_metrics (Gruplanmis)
+    emptyDF.agg(
+      avg("valence").as("avg_valence"),
+      avg("energy").as("avg_energy"),
+      count("*").as("total_streams")
+    ).withColumn("window_start_time", current_timestamp())
+      .write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
+
+    // 4. engagement_metrics (Gruplanmis)
+    emptyDF.groupBy("track_uri").agg(
+      avg("completion_rate").as("completion_rate"),
+      sum(when(col("is_skip"), 1).otherwise(0)).as("skip_count"),
+      sum(when(!col("is_skip"), 1).otherwise(0)).as("natural_end_count")
+    ).withColumn("window_start_time", current_timestamp())
+      .write.mode(SaveMode.Ignore).jdbc(dbUrl, "engagement_metrics", dbProps)
+
+    // 5. mood_matrix_samples
+    emptyDF.select("timestamp", "track_uri", "artist_name", "valence", "energy")
+      .write.mode(SaveMode.Ignore).jdbc(dbUrl, "mood_matrix_samples", dbProps)
+
+    println("Tablolar basariyla olusturuldu! Stream bekleniyor...")
+    // --------------------------------------------------------
+
     // MICRO-BATCH İŞLEME VE ANALİTİK
     val query = parsedLogDF.writeStream
       .foreachBatch { (batchDF: DataFrame, batchId: Long) =>

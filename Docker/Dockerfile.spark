@@ -1,0 +1,16 @@
+# Temel imajımız Docker Compose'da kullandıgımız resmi imaj
+FROM apache/spark:3.5.0
+
+USER root
+WORKDIR /app
+
+# SBT ile derlediğimiz devasa JAR'i imajin icine kopyaliyoruz
+COPY ["Spark Streaming/target/scala-2.12/VibeStream-assembly-1.0.jar", "/app/VibeStream.jar"]
+
+# Spark-submit komutumuzu Compose'daki argumanlarla birebir ayni sekilde atiyoruz[cite: 1]
+CMD /opt/spark/bin/spark-submit \
+    --master "local[*]" \
+    --conf "spark.jars.ivy=/tmp/.ivy2" \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0,redis.clients:jedis:4.4.3,com.fasterxml.jackson.module:jackson-module-scala_2.12:2.15.2 \
+    --class VibeStreamApp \
+    /app/VibeStream.jar
