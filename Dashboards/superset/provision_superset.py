@@ -242,7 +242,7 @@ TABS = {
         "Ortalama Tamamlama Oranı",
         "Skip Oranı",
         "Zaman İçinde Ortalama Mood (Valence & Energy)",
-        "Dinleme Yoğunluğu Isı Haritası (Saat x Gün)",
+        "Dinleme Yoğunluğu (20 Saniyelik)",
     ],
     "Leaderboard & Engagement": [
         "En Çok Çalınan Şarkılar (Grafik)",
@@ -628,13 +628,19 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "subheader": "Manuel olarak geçilen şarkı oranı",
             },
         )
-        defs["Dinleme Yoğunluğu Isı Haritası (Saat x Gün)"] = (
-            "heatmap_v2", events_ds_id, {
-                "x_axis": "hour_of_day", "groupby": "day_of_week",
-                "metric": sql_metric("COUNT(*)", "Dinleme Sayısı"),
-                "linear_color_scheme": "greens", "y_axis_format": "SMART_NUMBER", 
-                "adhoc_filters": [], "time_range": "No filter",
+        defs["Dinleme Yoğunluğu (20 Saniyelik)"] = (
+            "echarts_timeseries_bar", events_ds_id, {
+                # Eskiden hour_of_day x day_of_week ısı haritasıydı - artık veri
+                # gerçek zamanlı aktığı için saat/gün dağılımı anlamsız kaldı
+                # (hep "bugün" ve birkaç saat). Diğer "20 Saniyelik" grafiklerle
+                # aynı mantığa geçirildi.
+                "x_axis": "time_bucket_20s",
+                "metrics": [sql_metric("COUNT(*)", "Dinleme Sayısı")],
+                "groupby": [], "row_limit": 60, "adhoc_filters": [],
+                "show_legend": False, "label_colors": {"Dinleme Sayısı": COLOR_SECONDARY},
+                "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
                 "x_axis_title": "", "y_axis_title": "",
+                "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
         defs["20 Saniyelik Dinleme Yoğunluğu"] = (

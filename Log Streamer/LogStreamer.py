@@ -1,7 +1,7 @@
 import os
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 from kafka import KafkaProducer
 import redis
@@ -10,6 +10,16 @@ CURRENT_DIR = os.path.dirname(__file__)
 CSV_PATH = os.path.abspath(
     os.path.join(CURRENT_DIR, '..', 'Datasets', 'cleaned_streaming_history.csv')
 )
+
+# Container'ın işletim sistemi genelde UTC saat diliminde çalışıyor, bu yüzden
+# datetime.now() Türkiye saatinden (UTC+3) 3 saat geride kalıyordu. Türkiye
+# DST uygulamadığı (2016'dan beri sabit UTC+3) için bunu güvenle sabit
+# offset ile düzeltebiliyoruz - container'ın TZ ayarına bağımlı kalmadan.
+TURKEY_TZ = timezone(timedelta(hours=3))
+
+
+def now_turkey():
+    return datetime.now(TURKEY_TZ)
 
 def start_streaming():
     r = redis.Redis(
@@ -42,7 +52,7 @@ def start_streaming():
             # gönderildiği ANDAKİ gerçek zamanla damgalanıyor. Böylece
             # dashboard'daki "20 saniyelik dilim" grafikleri gerçekten
             # "şimdi" ile "az önce" arasındaki canlı akışı yansıtıyor.
-            log_dict['ts'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            log_dict['ts'] = now_turkey().strftime('%Y-%m-%d %H:%M:%S')
 
             producer.send(
                 'vibestream_logs',
