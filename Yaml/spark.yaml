@@ -13,20 +13,61 @@ spec:
       labels:
         app: spark
     spec:
-      # YENI: Ana uygulamadan once calisip isi bitiren hazirlik konteyneri (kafka-init)
+      # Ana uygulamadan once calisip isi bitiren hazirlik konteyneri (kafka-init)
       initContainers:
-      - name: kafka-init
-        image: apache/kafka:latest
-        command:
-        - sh
-        - -c
-        - "/opt/kafka/bin/kafka-topics.sh --create --topic vibestream_logs --partitions 1 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists"
+        - name: kafka-init
+          image: apache/kafka:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Kafka topic kontrol ediliyor / olusturuluyor..."
+              /opt/kafka/bin/kafka-topics.sh --create --topic vibestream_logs --partitions 3 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists
+              
+              echo "Partition sayisi garantiye aliniyor (Alter)..."
+              /opt/kafka/bin/kafka-topics.sh --alter --topic vibestream_logs --partitions 3 --bootstrap-server kafka:9092 || true
+              echo "Kafka topic hazir!"
 
-      # ASIL UYGULAMA: initContainer basariyla kapanmadan bu asama asla baslamaz
+      # initContainer basariyla kapanmadan bu asama asla baslamaz
       containers:
       - name: spark
         image: vibestream-spark:latest
         imagePullPolicy: Always
         resources:
+          requests:
+            cpu: "500m"
           limits:
-            cpu: "2.0" # Docker Compose'da Spark icin belirledigin islemci limiti[cite: 1]
+            cpu: "2.0" # Docker Compose'da Spark icin belirlenmis islemci limiti
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vibestream-spark-hpa
+  namespace: vibestream
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vibestream-spark
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
