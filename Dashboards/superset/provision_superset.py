@@ -250,10 +250,10 @@ TABS = {
         "Sanatçı Bazlı Beğenilirlik Skoru",
     ],
     "System Health & Trends": [
-        "Saatlik Dinleme Yoğunluğu",
+        "20 Saniyelik Dinleme Yoğunluğu",
         "Çıkış Yılına Göre Dinleme Dağılımı (Nostalji)",
-        "Saatlik Skip Oranı",
-        "Saatlik Ortalama Tamamlama Oranı",
+        "20 Saniyelik Skip Oranı",
+        "20 Saniyelik Ortalama Tamamlama Oranı",
     ],
     "Mühendislik Paneli": [
         "Anlık Veri Akış Hızı (Events/sec)",
@@ -562,11 +562,15 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
         defs["Zaman İçinde Ortalama Mood (Valence & Energy)"] = (
             "echarts_timeseries_line", mood_ds_id, {
                 "x_axis": "window_start_time", "x_axis_sort_asc": True,
-                "x_axis_time_format": "smart_date", "time_grain_sqla": "PT1H",
+                # PT1H (saatlik) gruplama, birkaç dakikalık gerçek zamanlı veriyi
+                # tek bir noktaya sıkıştırıp grafiği boş/anlamsız gösteriyordu.
+                # PT5S (5 saniyelik) ile diğer canlı grafiklerle tutarlı, akan
+                # bir çizgi elde ediyoruz.
+                "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT5S",
                 "metrics": [sql_metric("AVG(avg_valence)", "Avg Valence"), sql_metric("AVG(avg_energy)", "Avg Energy")],
                 "groupby": [], "adhoc_filters": [], "row_limit": 1000,
                 "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
-                "y_axis_format": "SMART_NUMBER", "time_range": "No filter",
+                "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
                 "x_axis_title": "", "y_axis_title": "",
                 "label_colors": {"Avg Valence": COLOR_MAIN, "Avg Energy": COLOR_CONTRAST},
                 "line_style": "smooth", "show_area_chart": True, "opacity": 0.15, "markerEnabled": False,
@@ -633,7 +637,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "x_axis_title": "", "y_axis_title": "",
             },
         )
-        defs["Saatlik Dinleme Yoğunluğu"] = (
+        defs["20 Saniyelik Dinleme Yoğunluğu"] = (
             "echarts_timeseries_bar", events_ds_id, {
                 # hour_of_day yerine time_bucket_20s: veri artık "hour_of_day"a
                 # göre değil, 20 saniyelik gerçek zaman dilimlerine göre
@@ -643,29 +647,31 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Stream Count": COLOR_SECONDARY},
                 "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
-                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                # x_axis_title boş bırakılıyor: saat etiketleriyle (03:19:00 vb.)
+                # üst üste biniyordu, ayrıca chart başlığı zaten bunu anlatıyor.
+                "x_axis_title": "", "y_axis_title": "",
                 "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
-        defs["Saatlik Skip Oranı"] = (
+        defs["20 Saniyelik Skip Oranı"] = (
             "echarts_timeseries_bar", events_ds_id, {
                 "x_axis": "time_bucket_20s",
                 "metrics": [sql_metric("SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1)", "Skip Oranı")],
                 "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Skip Oranı": COLOR_MAIN},
                 "y_axis_format": ".0%", "time_range": "Last 20 minutes",
-                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                "x_axis_title": "", "y_axis_title": "",
                 "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
-        defs["Saatlik Ortalama Tamamlama Oranı"] = (
+        defs["20 Saniyelik Ortalama Tamamlama Oranı"] = (
             "echarts_timeseries_bar", events_ds_id, {
                 "x_axis": "time_bucket_20s",
                 "metrics": [sql_metric("AVG(completion_rate)", "Ort. Tamamlama")],
                 "groupby": [], "row_limit": 60, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Ort. Tamamlama": COLOR_MAIN},
                 "y_axis_format": ".0%", "time_range": "Last 20 minutes",
-                "x_axis_title": "20 saniyelik dilim", "y_axis_title": "",
+                "x_axis_title": "", "y_axis_title": "",
                 "time_grain_sqla": None, "x_axis_time_format": "%H:%M:%S",
             },
         )
@@ -721,11 +727,24 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
     if partition_ds_id:
         defs["Partition -> CPU Çekirdek Dağılımı"] = (
             "echarts_timeseries_bar", partition_ds_id, {
-                "x_axis": "thread_name",
+                # thread_name yerine thread_id kullanıyoruz: thread_name içine
+                # Spark her görev için stage/TID bilgisini gömüyor (örn.
+                # "...task 0.0 in stage 453.0 (TID 355)"), yani pratikte HER
+                # bar için FARKLI bir metin oluyor - bu da eksende yüzlerce
+                # dev, üst üste binen etiket demekti. thread_id ise JVM'in
+                # thread havuzundaki sabit sayısal kimlik, çok daha az ve
+                # okunabilir kategori üretiyor (gerçek "çekirdek" kimliği).
+                #
+                # groupby=["partition_id"] de kaldırıldı: Superset, groupby
+                # varken rengi metrik etiketine göre değil, kategori
+                # (partition_id) değerine göre seçiyor - bu yüzden dashboard
+                # seviyesindeki "Kayıt Sayısı" rengi hiç eşleşmiyor, varsayılan
+                # mavi paletin ilk rengine düşüyordu.
+                "x_axis": "thread_id",
                 "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
-                "groupby": ["partition_id"], "row_limit": 100, "adhoc_filters": [],
-                "show_legend": True, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
-                "x_axis_title": "CPU Thread (Çekirdek)", "y_axis_title": "İşlenen Kayıt Sayısı",
+                "groupby": [], "row_limit": 32, "adhoc_filters": [],
+                "show_legend": False, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
+                "x_axis_title": "CPU Thread ID (Çekirdek)", "y_axis_title": "İşlenen Kayıt Sayısı",
                 # Son 15 dakikadaki dağılımı göster - eski batch'ler ekranı kalabalıklaştırmasın.
                 "time_range": "Last 15 minutes",
             },
