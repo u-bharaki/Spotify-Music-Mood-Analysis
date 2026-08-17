@@ -4,6 +4,7 @@ import org.apache.spark.sql.types._
 import redis.clients.jedis.Jedis
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import org.apache.spark.TaskContext
 import java.util.Properties
 import java.sql.Timestamp
 
@@ -67,11 +68,40 @@ object VibeStreamApp {
       .add("is_skip", BooleanType)
       .add("hour_of_day", IntegerType)
       .add("day_of_week", IntegerType)
+      .add("time_bucket_20s", TimestampType)
 
     val emptyDF = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], dummySchema)
 
+    // ÖNEMLİ: SaveMode.Ignore, tablo ZATEN VARSA hiçbir şey yapmaz - var olan
+    // bir tabloya yeni kolon (örn. time_bucket_20s) EKLEMEZ. Bu yüzden
+    // uygulama daha önce çalışıp tabloyu oluşturmuşsa, yeni eklenen kolonlar
+    // "column does not exist" hatasına yol açar. Burada ham JDBC ile
+    // "ADD COLUMN IF NOT EXISTS" çalıştırarak var olan tabloları da güvenle
+    // güncelliyoruz (tablo hiç yoksa aşağıdaki emptyDF.write zaten oluşturacak).
+    def ensureColumn(conn: java.sql.Connection, table: String, column: String, sqlType: String): Unit = {
+      val stmt = conn.createStatement()
+      try {
+        stmt.execute(s"ALTER TABLE $table ADD COLUMN IF NOT EXISTS $column $sqlType")
+      } catch {
+        case e: Exception =>
+          println(s"[UYARI] $table.$column eklenemedi (tablo henüz yoktur, normal olabilir): ${e.getMessage}")
+      } finally {
+        stmt.close()
+      }
+    }
+
     // 1. realtime_streaming_events (Ana Tablo)
     emptyDF.write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_streaming_events", dbProps)
+
+    {
+      val conn = java.sql.DriverManager.getConnection(dbUrl, "vibe_admin", "vibe_password")
+      try {
+        ensureColumn(conn, "realtime_streaming_events", "time_bucket_20s", "TIMESTAMP")
+      } finally {
+        conn.close()
+      }
+    }
+
 
     // 2. realtime_leaderboard (Gruplanmis)
     emptyDF.groupBy("track_uri").agg(
@@ -101,6 +131,19 @@ object VibeStreamApp {
     emptyDF.select("timestamp", "track_uri", "artist_name", "valence", "energy")
       .write.mode(SaveMode.Ignore).jdbc(dbUrl, "mood_matrix_samples", dbProps)
 
+    // 6. partition_core_metrics (Kafka partition'larının hangi JVM thread'inde
+    // -> yani local[*] modunda hangi CPU çekirdeğinde işlendiğini gösterir)
+    val partitionMetricsSchema = new StructType()
+      .add("timestamp", TimestampType)
+      .add("batch_id", LongType)
+      .add("partition_id", IntegerType)
+      .add("thread_id", LongType)
+      .add("thread_name", StringType)
+      .add("record_count", IntegerType)
+
+    val emptyPartitionMetricsDF = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], partitionMetricsSchema)
+    emptyPartitionMetricsDF.write.mode(SaveMode.Ignore).jdbc(dbUrl, "partition_core_metrics", dbProps)
+
     println("Tablolar basariyla olusturuldu! Stream bekleniyor...")
     // --------------------------------------------------------
 
@@ -109,6 +152,36 @@ object VibeStreamApp {
       .foreachBatch { (batchDF: DataFrame, batchId: Long) =>
         if (!batchDF.isEmpty) {
           println(s"--- Micro-Batch $batchId İşleniyor ---")
+
+          // 0. PARTITION -> CPU ÇEKİRDEĞİ (THREAD) DAĞILIMI
+          // local[*] modunda her Kafka partition'ı bir görev (task) olarak
+          // JVM'in thread havuzundaki bir çekirdeğe atanır. Hangi partition'ın
+          // hangi thread'de (dolayısıyla hangi çekirdekte) işlendiğini ve kaç
+          // kayıt taşıdığını yakalayıp "Mühendislik Paneli"nde görselleştiriyoruz.
+          val partitionCoreRDD = batchDF.rdd.mapPartitions { partition =>
+            val rows = partition.toArray
+            val partitionId = TaskContext.getPartitionId()
+            val thread = Thread.currentThread()
+            Iterator(Row(
+              Timestamp.valueOf(java.time.LocalDateTime.now()),
+              batchId,
+              partitionId,
+              thread.getId,
+              thread.getName,
+              rows.length
+            ))
+          }
+
+          val partitionCoreSchema = new StructType()
+            .add("timestamp", TimestampType)
+            .add("batch_id", LongType)
+            .add("partition_id", IntegerType)
+            .add("thread_id", LongType)
+            .add("thread_name", StringType)
+            .add("record_count", IntegerType)
+
+          val partitionCoreDF = spark.createDataFrame(partitionCoreRDD, partitionCoreSchema)
+          partitionCoreDF.write.mode(SaveMode.Append).jdbc(dbUrl, "partition_core_metrics", dbProps)
 
           // 1. ZENGİNLEŞTİRME VE PARÇALAMA (Enrichment)
           val enrichedRDD = batchDF.rdd.mapPartitions { partition =>
@@ -162,8 +235,18 @@ object VibeStreamApp {
               val hourOfDay = localDt.getHour
               val dayOfWeek = localDt.getDayOfWeek.getValue // 1 = Pazartesi ... 7 = Pazar
 
+              // "time_bucket_20s": timestamp'i en yakın 20 saniyelik dilime
+              // yuvarlıyoruz (epoch'a göre hizalı). Böylece "Saatlik ..."
+              // grafikleri artık saat yerine son birkaç dakikadaki gerçek
+              // 20 saniyelik pencerelerin akışını gösterebiliyor
+              // (son 20sn, ondan önceki 20sn, vs.).
+              val epochSeconds = tsTimestamp.getTime / 1000L
+              val bucketEpochSeconds = (epochSeconds / 20L) * 20L
+              val timeBucket20s = new Timestamp(bucketEpochSeconds * 1000L)
+
               Row(tsTimestamp, trackUri, trackName, albumName, artistName, msPlayed, energy, valence,
-                danceability, acousticness, durationMs, year, completionRate, isSkip, hourOfDay, dayOfWeek)
+                danceability, acousticness, durationMs, year, completionRate, isSkip, hourOfDay, dayOfWeek,
+                timeBucket20s)
             }
             jedis.close()
             enrichedRows
@@ -186,6 +269,7 @@ object VibeStreamApp {
             .add("is_skip", BooleanType)
             .add("hour_of_day", IntegerType)
             .add("day_of_week", IntegerType)
+            .add("time_bucket_20s", TimestampType)
 
           val enrichedDF = spark.createDataFrame(enrichedRDD, enrichedSchema)
           enrichedDF.cache() // Veriyi RAM'de tut, üç kere kullanacağız!

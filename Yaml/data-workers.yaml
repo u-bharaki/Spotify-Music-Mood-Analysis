@@ -32,7 +32,6 @@ spec:
       containers:
       - name: simulator
         image: vibestream-workers:latest
-        imagePullPolicy: Never
+        imagePullPolicy: Always
         workingDir: "/app/Log Streamer"
-        # Pod uyanık kalacak ama hiçbir şey yapmayacak
         command: ["sh", "-c", "tail -f /dev/null"]
