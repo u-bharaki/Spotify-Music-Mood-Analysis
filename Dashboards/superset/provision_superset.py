@@ -248,6 +248,7 @@ TABS = {
         "En Çok Çalınan Şarkılar (Grafik)",
         "En Çok Çalınan Şarkılar",
         "Sanatçı Bazlı Beğenilirlik Skoru",
+        "Popüler ve Beğenilen Sanatçılar",
     ],
     "System Health & Trends": [
         "20 Saniyelik Dinleme Yoğunluğu",
@@ -257,8 +258,9 @@ TABS = {
     ],
     "Mühendislik Paneli": [
         "Anlık Veri Akış Hızı (Events/sec)",
-        "Partition Bazlı Yük Dengesi",
+        "Anlık Akış Hızı (Sayısal)",
         "Partition Yük Dengesi (Zaman İçinde)",
+        "Partition Bazlı Yük Dengesi",
         "Partition Detay Tablosu",
         "Cluster CPU Kullanımı (Pod Bazlı)",
         "HPA Replica Sayısı (Zaman İçinde)",
@@ -523,6 +525,9 @@ def apply_dashboard_layout(session, dashboard_id, tabs_with_charts):
             "Aktif Pod Sayısı": SPOTIFY_GREEN,
             "Hedef Pod Sayısı": "#ffffff",
             "Kayıt Sayısı": SPOTIFY_LIGHT_GREEN,
+            "Popülerlik x Beğeni": SPOTIFY_GREEN,
+            "Toplam Kayıt Sayısı": SPOTIFY_LIGHT_GREEN,
+            "Olay/Dakika": SPOTIFY_GREEN,
         },
         "color_scheme": "supersetColors",
         "refresh_frequency": 5  # <--- EKLENEN SATIR: Dashboard her 5 saniyede bir otomatik güncellenecek
@@ -720,6 +725,35 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "time_range": "No filter",
             },
         )
+        # "Popüler ve Beğenilen Sanatçılar": saf "Beğenilirlik Skoru" grafiği
+        # tek bir dinlemesi olup o dinleme %100 tamamlanmış (dolayısıyla
+        # "mükemmel" skor almış) sanatçıları da tepeye taşıyabiliyor - bu şans
+        # eseri bir sonuç, gerçek popülerlik değil. Burada 0-1 arasında
+        # normalize edilmiş bir skor kullanıyoruz:
+        #   - (completion_rate - skip_rate) aralığı [-1,1] -> +1/2 ile [0,1]'e
+        #     kaydırılıyor.
+        #   - ln(count+1) yerine SINIRLI bir "güven ağırlığı" kullanılıyor:
+        #     count/(count+5), bu da her zaman [0,1) aralığında kalıyor ve
+        #     dinleme sayısı arttıkça 1'e yaklaşıyor.
+        # İkisinin çarpımı da garanti şekilde [0,1] aralığında kalıyor.
+        popular_liked_expr = (
+            "((AVG(completion_rate) - (SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1))) + 1) / 2"
+            " * (COUNT(*)::float / (COUNT(*) + 5))"
+        )
+        defs["Popüler ve Beğenilen Sanatçılar"] = (
+            "echarts_timeseries_bar", events_ds_id, {
+                "x_axis": "artist_name",
+                "metrics": [sql_metric(popular_liked_expr, "Popülerlik x Beğeni")],
+                "groupby": [], "row_limit": 10, "order_desc": True,
+                "series_limit": 10,
+                "series_limit_metric": sql_metric(popular_liked_expr, "Popülerlik x Beğeni"),
+                "adhoc_filters": [], "show_legend": False,
+                "label_colors": {"Popülerlik x Beğeni": COLOR_MAIN},
+                "y_axis_bounds": [0, 1], "y_axis_format": ".2f",
+                "x_axis_title": "", "y_axis_title": "",
+                "time_range": "No filter",
+            },
+        )
 
     # --- Mühendislik Paneli --------------------------------------------
     # "Anlık Veri Akış Hızı": Kafka'ya hiç bağlanmadan, doğrudan Postgres'e
@@ -735,24 +769,48 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "time_range": "Last day",
             },
         )
+        # "Anlık Akış Hızı (Sayısal)": yukarıdaki bar chart'ın son dakikasını
+        # tek bir büyük sayı olarak özetliyor - "Partition Bazlı Yük
+        # Dengesi"nin bar chart hâli tabloya taşındığı için boşalan üst-sağ
+        # yeri dolduruyor.
+        defs["Anlık Akış Hızı (Sayısal)"] = (
+            "big_number_total", events_ds_id, {
+                "metric": sql_metric("COUNT(*)", "Olay/Dakika"),
+                # "time_range": "Last 1 minute" big_number_total'da her zaman
+                # güvenilir çalışmıyor (tüm tabloyu topluyormuş gibi
+                # davranabiliyor) - bu yüzden SQL seviyesinde açık bir WHERE
+                # koşuluyla "son 1 dakika"yı garanti ediyoruz.
+                "adhoc_filters": [{
+                    "clause": "WHERE",
+                    "expressionType": "SQL",
+                    "sqlExpression": "\"timestamp\" >= NOW() - INTERVAL '1 minute'",
+                }],
+                "time_range": "No filter",
+                "subheader": "Olay sayısı",
+                "y_axis_format": "SMART_NUMBER",
+            },
+        )
 
     # "Partition Bazlı Yük Dengesi": VibeStreamApp.scala her micro-batch'te
     # hangi Kafka partition'ının kaç kayıt taşıdığını partition_core_metrics
-    # tablosuna yazar. Şu an tek partition olduğu için hep tek bar/tek çizgi
+    # tablosuna yazar. Şu an tek partition olduğu için hep tek satır
     # görünmesi NORMAL ve BEKLENEN bir durum - bu, "sistem dengeli çalışıyor"
     # demek. Partition sayısı arttırılırsa (docker-compose.yml'de
-    # --partitions), buradaki grafikler dengenin bozulup bozulmadığını
+    # --partitions), buradaki tablo dengenin bozulup bozulmadığını
     # (bazı partition'ların aç kalıp bazılarının tıka basa dolması gibi
     # skew durumlarını) izlemek için kullanışlı olur. Artık "CPU çekirdek"
     # iddiası yok - dürüstçe partition yükü olarak adlandırıldı.
+    # "Partition Detay Tablosu" ile aynı stile (table + showCellBars) taşındı
+    # - bar chart yerine tablo formatı istendiği için.
     if partition_ds_id:
         defs["Partition Bazlı Yük Dengesi"] = (
-            "echarts_timeseries_bar", partition_ds_id, {
-                "x_axis": "partition_id",
-                "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
-                "groupby": [], "row_limit": 32, "adhoc_filters": [],
-                "show_legend": False, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
-                "x_axis_title": "Partition ID", "y_axis_title": "Toplam Kayıt Sayısı",
+            "table", partition_ds_id, {
+                "query_mode": "aggregate", "groupby": ["partition_id"],
+                "metrics": [sql_metric("SUM(record_count)", "Toplam Kayıt Sayısı")],
+                "adhoc_filters": [], "row_limit": 32,
+                "column_config": {
+                    "Toplam Kayıt Sayısı": {"showCellBars": True, "d3NumberFormat": ",d"},
+                },
                 "time_range": "Last 15 minutes",
             },
         )
@@ -761,7 +819,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 # Aynı toplamı zaman ekseninde, partition başına AYRI bir
                 # çizgi olarak gösteriyoruz -> dengenin zamanla bozulup
                 # bozulmadığını (örn. bir partition'ın giderek geride kalması)
-                # burada yakalarsınız; yukarıdaki bar sadece anlık toplamı verir.
+                # burada yakalarsınız; yukarıdaki tablo sadece anlık toplamı verir.
                 "x_axis": "timestamp", "x_axis_sort_asc": True,
                 "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT1M",
                 "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],

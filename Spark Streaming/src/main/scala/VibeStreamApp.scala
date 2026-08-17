@@ -175,8 +175,12 @@ object VibeStreamApp {
             val rows = partition.toArray
             val partitionId = TaskContext.getPartitionId()
             val thread = Thread.currentThread()
+            // LocalDateTime.now() container'ın (muhtemelen UTC) sistem saatini
+            // kullanıyordu - window_start_time'da yaşadığımız 3 saatlik kayma
+            // burada da vardı. Türkiye saatine (sabit UTC+3, DST yok) sabitliyoruz.
+            val nowTurkey = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul")).toLocalDateTime
             Iterator(Row(
-              Timestamp.valueOf(java.time.LocalDateTime.now()),
+              Timestamp.valueOf(nowTurkey),
               batchId,
               partitionId,
               thread.getId,
