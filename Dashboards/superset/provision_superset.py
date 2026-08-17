@@ -257,7 +257,9 @@ TABS = {
     ],
     "Mühendislik Paneli": [
         "Anlık Veri Akış Hızı (Events/sec)",
-        "Partition -> CPU Çekirdek Dağılımı",
+        "Partition Bazlı Yük Dengesi",
+        "Partition Yük Dengesi (Zaman İçinde)",
+        "Partition Detay Tablosu",
         "Cluster CPU Kullanımı (Pod Bazlı)",
         "HPA Replica Sayısı (Zaman İçinde)",
     ],
@@ -726,33 +728,58 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
             },
         )
 
-    # "Partition -> CPU Çekirdek Dağılımı": VibeStreamApp.scala her micro-batch'te
-    # hangi Kafka partition'ının hangi JVM thread'inde (local[*] modunda thread =
-    # çekirdek) işlendiğini partition_core_metrics tablosuna yazar. Kafka topic'i
-    # artık 4 partition ile oluşturuluyor (bkz. docker-compose.yml), böylece
-    # local[*] birden fazla çekirdeğe gerçekten iş dağıtabiliyor.
+    # "Partition Bazlı Yük Dengesi": VibeStreamApp.scala her micro-batch'te
+    # hangi Kafka partition'ının kaç kayıt taşıdığını partition_core_metrics
+    # tablosuna yazar. Şu an tek partition olduğu için hep tek bar/tek çizgi
+    # görünmesi NORMAL ve BEKLENEN bir durum - bu, "sistem dengeli çalışıyor"
+    # demek. Partition sayısı arttırılırsa (docker-compose.yml'de
+    # --partitions), buradaki grafikler dengenin bozulup bozulmadığını
+    # (bazı partition'ların aç kalıp bazılarının tıka basa dolması gibi
+    # skew durumlarını) izlemek için kullanışlı olur. Artık "CPU çekirdek"
+    # iddiası yok - dürüstçe partition yükü olarak adlandırıldı.
     if partition_ds_id:
-        defs["Partition -> CPU Çekirdek Dağılımı"] = (
+        defs["Partition Bazlı Yük Dengesi"] = (
             "echarts_timeseries_bar", partition_ds_id, {
-                # thread_name yerine thread_id kullanıyoruz: thread_name içine
-                # Spark her görev için stage/TID bilgisini gömüyor (örn.
-                # "...task 0.0 in stage 453.0 (TID 355)"), yani pratikte HER
-                # bar için FARKLI bir metin oluyor - bu da eksende yüzlerce
-                # dev, üst üste binen etiket demekti. thread_id ise JVM'in
-                # thread havuzundaki sabit sayısal kimlik, çok daha az ve
-                # okunabilir kategori üretiyor (gerçek "çekirdek" kimliği).
-                #
-                # groupby=["partition_id"] de kaldırıldı: Superset, groupby
-                # varken rengi metrik etiketine göre değil, kategori
-                # (partition_id) değerine göre seçiyor - bu yüzden dashboard
-                # seviyesindeki "Kayıt Sayısı" rengi hiç eşleşmiyor, varsayılan
-                # mavi paletin ilk rengine düşüyordu.
-                "x_axis": "thread_id",
+                "x_axis": "partition_id",
                 "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
                 "groupby": [], "row_limit": 32, "adhoc_filters": [],
                 "show_legend": False, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
-                "x_axis_title": "CPU Thread ID (Çekirdek)", "y_axis_title": "İşlenen Kayıt Sayısı",
-                # Son 15 dakikadaki dağılımı göster - eski batch'ler ekranı kalabalıklaştırmasın.
+                "x_axis_title": "Partition ID", "y_axis_title": "Toplam Kayıt Sayısı",
+                "time_range": "Last 15 minutes",
+            },
+        )
+        defs["Partition Yük Dengesi (Zaman İçinde)"] = (
+            "echarts_timeseries_line", partition_ds_id, {
+                # Aynı toplamı zaman ekseninde, partition başına AYRI bir
+                # çizgi olarak gösteriyoruz -> dengenin zamanla bozulup
+                # bozulmadığını (örn. bir partition'ın giderek geride kalması)
+                # burada yakalarsınız; yukarıdaki bar sadece anlık toplamı verir.
+                "x_axis": "timestamp", "x_axis_sort_asc": True,
+                "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT1M",
+                "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
+                "groupby": ["partition_id"], "adhoc_filters": [], "row_limit": 1000,
+                "show_legend": True, "rich_tooltip": True,
+                "y_axis_format": "SMART_NUMBER", "time_range": "Last 15 minutes",
+                "x_axis_title": "", "y_axis_title": "Dakikalık Kayıt Sayısı",
+                "line_style": "smooth", "markerEnabled": False,
+            },
+        )
+        defs["Partition Detay Tablosu"] = (
+            "table", partition_ds_id, {
+                # Tek bakışta hangi partition'ın kaç batch'te göründüğü,
+                # toplamda kaç kayıt taşıdığı ve ortalama batch büyüklüğü -
+                # dengesizlik varsa (örn. bir partition çok daha büyük
+                # ortalama batch'lerle çalışıyorsa) burada net görünür.
+                "query_mode": "aggregate", "groupby": ["partition_id"],
+                "metrics": [
+                    sql_metric("COUNT(*)", "Batch Sayısı"),
+                    sql_metric("SUM(record_count)", "Toplam Kayıt"),
+                    sql_metric("AVG(record_count)", "Ort. Batch Boyutu"),
+                ],
+                "adhoc_filters": [], "row_limit": 32,
+                "column_config": {
+                    "Toplam Kayıt": {"showCellBars": True, "d3NumberFormat": ",d"},
+                },
                 "time_range": "Last 15 minutes",
             },
         )
