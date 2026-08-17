@@ -7,12 +7,13 @@ import sys
 # Yolları klasör yapına göre dinamik ayarlıyoruz
 CURRENT_DIR = os.path.dirname(__file__)
 JSON_PATH = os.path.abspath(os.path.join(CURRENT_DIR, '..', 'Datasets', 'redis_seed_data.json'))
+MUTLU_CSV_PATH = os.path.abspath(os.path.join(CURRENT_DIR, '..', 'Datasets', 'cleaned_mutlu_senaryo.csv'))
 ONE_OFF_SCRIPT_PATH = os.path.abspath(os.path.join(CURRENT_DIR, '..', 'One-off Scripts', 'DatasetFixer.py'))
 
 
 def seed_redis():
     # 1. Eğer JSON yoksa, senin yazdığın veri hazırlık scriptini çalıştır
-    if not os.path.exists(JSON_PATH):
+    if not os.path.exists(JSON_PATH) or not os.path.exists(MUTLU_CSV_PATH):
         print(f"İşlenmiş JSON bulunamadı. Kendi ETL scriptimiz çalıştırılıyor: {ONE_OFF_SCRIPT_PATH}")
         # Python ile senin "One-off" scriptini tetikliyoruz
         subprocess.run([sys.executable, ONE_OFF_SCRIPT_PATH], check=True)
