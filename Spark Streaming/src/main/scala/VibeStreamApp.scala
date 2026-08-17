@@ -115,9 +115,22 @@ object VibeStreamApp {
     emptyDF.agg(
       avg("valence").as("avg_valence"),
       avg("energy").as("avg_energy"),
+      avg("danceability").as("avg_danceability"),
       count("*").as("total_streams")
     ).withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
       .write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
+
+    {
+      // Var olan realtime_mood_metrics tablosu daha önce avg_danceability
+      // olmadan oluşturulmuş olabilir - SaveMode.Ignore var olan tabloya
+      // kolon eklemiyor, o yüzden ham JDBC ile ekliyoruz.
+      val conn = java.sql.DriverManager.getConnection(dbUrl, "vibe_admin", "vibe_password")
+      try {
+        ensureColumn(conn, "realtime_mood_metrics", "avg_danceability", "DOUBLE PRECISION")
+      } finally {
+        conn.close()
+      }
+    }
 
     // 4. engagement_metrics (Gruplanmis)
     emptyDF.groupBy("track_uri").agg(
@@ -294,6 +307,7 @@ object VibeStreamApp {
             .agg(
               avg("valence").as("avg_valence"),
               avg("energy").as("avg_energy"),
+              avg("danceability").as("avg_danceability"),
               count("*").as("total_streams")
             )
             .withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))

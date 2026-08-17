@@ -241,7 +241,7 @@ TABS = {
         "Toplam Stream Sayısı",
         "Ortalama Tamamlama Oranı",
         "Skip Oranı",
-        "Zaman İçinde Ortalama Mood (Valence & Energy)",
+        "Zaman İçinde Ortalama Mood (Valence, Energy & Danceability)",
         "Dinleme Yoğunluğu (20 Saniyelik)",
     ],
     "Leaderboard & Engagement": [
@@ -561,7 +561,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
     COLOR_CONTRAST = "#ffffff"  
 
     if mood_ds_id:
-        defs["Zaman İçinde Ortalama Mood (Valence & Energy)"] = (
+        defs["Zaman İçinde Ortalama Mood (Valence, Energy & Danceability)"] = (
             "echarts_timeseries_line", mood_ds_id, {
                 "x_axis": "window_start_time", "x_axis_sort_asc": True,
                 # PT1H (saatlik) gruplama, birkaç dakikalık gerçek zamanlı veriyi
@@ -569,12 +569,20 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 # PT5S (5 saniyelik) ile diğer canlı grafiklerle tutarlı, akan
                 # bir çizgi elde ediyoruz.
                 "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT5S",
-                "metrics": [sql_metric("AVG(avg_valence)", "Avg Valence"), sql_metric("AVG(avg_energy)", "Avg Energy")],
+                "metrics": [
+                    sql_metric("AVG(avg_valence)", "Avg Valence"),
+                    sql_metric("AVG(avg_energy)", "Avg Energy"),
+                    sql_metric("AVG(avg_danceability)", "Avg Danceability"),
+                ],
                 "groupby": [], "adhoc_filters": [], "row_limit": 1000,
                 "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
                 "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
                 "x_axis_title": "", "y_axis_title": "",
-                "label_colors": {"Avg Valence": COLOR_MAIN, "Avg Energy": COLOR_CONTRAST},
+                "label_colors": {
+                    "Avg Valence": COLOR_MAIN,
+                    "Avg Energy": COLOR_CONTRAST,
+                    "Avg Danceability": SPOTIFY_LIGHT_GREEN,
+                },
                 "line_style": "smooth", "show_area_chart": True, "opacity": 0.15, "markerEnabled": False,
             },
         )
