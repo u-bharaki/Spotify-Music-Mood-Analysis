@@ -108,23 +108,36 @@ object VibeStreamApp {
       first("track_name").as("track_name"),
       first("artist_name").as("artist_name"),
       count("*").as("play_count")
-    ).withColumn("window_start_time", current_timestamp())
+    ).withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
       .write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_leaderboard", dbProps)
 
     // 3. realtime_mood_metrics (Gruplanmis)
     emptyDF.agg(
       avg("valence").as("avg_valence"),
       avg("energy").as("avg_energy"),
+      avg("danceability").as("avg_danceability"),
       count("*").as("total_streams")
-    ).withColumn("window_start_time", current_timestamp())
+    ).withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
       .write.mode(SaveMode.Ignore).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
+
+    {
+      // Var olan realtime_mood_metrics tablosu daha önce avg_danceability
+      // olmadan oluşturulmuş olabilir - SaveMode.Ignore var olan tabloya
+      // kolon eklemiyor, o yüzden ham JDBC ile ekliyoruz.
+      val conn = java.sql.DriverManager.getConnection(dbUrl, "vibe_admin", "vibe_password")
+      try {
+        ensureColumn(conn, "realtime_mood_metrics", "avg_danceability", "DOUBLE PRECISION")
+      } finally {
+        conn.close()
+      }
+    }
 
     // 4. engagement_metrics (Gruplanmis)
     emptyDF.groupBy("track_uri").agg(
       avg("completion_rate").as("completion_rate"),
       sum(when(col("is_skip"), 1).otherwise(0)).as("skip_count"),
       sum(when(!col("is_skip"), 1).otherwise(0)).as("natural_end_count")
-    ).withColumn("window_start_time", current_timestamp())
+    ).withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
       .write.mode(SaveMode.Ignore).jdbc(dbUrl, "engagement_metrics", dbProps)
 
     // 5. mood_matrix_samples
@@ -162,8 +175,12 @@ object VibeStreamApp {
             val rows = partition.toArray
             val partitionId = TaskContext.getPartitionId()
             val thread = Thread.currentThread()
+            // LocalDateTime.now() container'ın (muhtemelen UTC) sistem saatini
+            // kullanıyordu - window_start_time'da yaşadığımız 3 saatlik kayma
+            // burada da vardı. Türkiye saatine (sabit UTC+3, DST yok) sabitliyoruz.
+            val nowTurkey = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul")).toLocalDateTime
             Iterator(Row(
-              Timestamp.valueOf(java.time.LocalDateTime.now()),
+              Timestamp.valueOf(nowTurkey),
               batchId,
               partitionId,
               thread.getId,
@@ -285,7 +302,7 @@ object VibeStreamApp {
               first("artist_name").as("artist_name"),
               count("*").as("play_count")
             )
-            .withColumn("window_start_time", current_timestamp()) // O anki micro-batch zamanı
+            .withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul")) // O anki micro-batch zamanı
 
           leaderboardDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_leaderboard", dbProps)
 
@@ -294,9 +311,10 @@ object VibeStreamApp {
             .agg(
               avg("valence").as("avg_valence"),
               avg("energy").as("avg_energy"),
+              avg("danceability").as("avg_danceability"),
               count("*").as("total_streams")
             )
-            .withColumn("window_start_time", current_timestamp())
+            .withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
 
           moodMetricsDF.write.mode(SaveMode.Append).jdbc(dbUrl, "realtime_mood_metrics", dbProps)
 
@@ -310,7 +328,7 @@ object VibeStreamApp {
               sum(when(col("is_skip"), 1).otherwise(0)).as("skip_count"),
               sum(when(!col("is_skip"), 1).otherwise(0)).as("natural_end_count")
             )
-            .withColumn("window_start_time", current_timestamp())
+            .withColumn("window_start_time", from_utc_timestamp(current_timestamp(), "Europe/Istanbul"))
 
           engagementDF.write.mode(SaveMode.Append).jdbc(dbUrl, "engagement_metrics", dbProps)
 

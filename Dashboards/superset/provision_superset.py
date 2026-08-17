@@ -241,13 +241,14 @@ TABS = {
         "Toplam Stream Sayısı",
         "Ortalama Tamamlama Oranı",
         "Skip Oranı",
-        "Zaman İçinde Ortalama Mood (Valence & Energy)",
+        "Zaman İçinde Ortalama Mood (Valence, Energy & Danceability)",
         "Dinleme Yoğunluğu (20 Saniyelik)",
     ],
     "Leaderboard & Engagement": [
         "En Çok Çalınan Şarkılar (Grafik)",
         "En Çok Çalınan Şarkılar",
         "Sanatçı Bazlı Beğenilirlik Skoru",
+        "Popüler ve Beğenilen Sanatçılar",
     ],
     "System Health & Trends": [
         "20 Saniyelik Dinleme Yoğunluğu",
@@ -257,7 +258,10 @@ TABS = {
     ],
     "Mühendislik Paneli": [
         "Anlık Veri Akış Hızı (Events/sec)",
-        "Partition -> CPU Çekirdek Dağılımı",
+        "Anlık Akış Hızı (Sayısal)",
+        "Partition Yük Dengesi (Zaman İçinde)",
+        "Partition Bazlı Yük Dengesi",
+        "Partition Detay Tablosu",
         "Cluster CPU Kullanımı (Pod Bazlı)",
         "HPA Replica Sayısı (Zaman İçinde)",
     ],
@@ -521,6 +525,9 @@ def apply_dashboard_layout(session, dashboard_id, tabs_with_charts):
             "Aktif Pod Sayısı": SPOTIFY_GREEN,
             "Hedef Pod Sayısı": "#ffffff",
             "Kayıt Sayısı": SPOTIFY_LIGHT_GREEN,
+            "Popülerlik x Beğeni": SPOTIFY_GREEN,
+            "Toplam Kayıt Sayısı": SPOTIFY_LIGHT_GREEN,
+            "Olay/Dakika": SPOTIFY_GREEN,
         },
         "color_scheme": "supersetColors",
         "refresh_frequency": 5  # <--- EKLENEN SATIR: Dashboard her 5 saniyede bir otomatik güncellenecek
@@ -559,7 +566,7 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
     COLOR_CONTRAST = "#ffffff"  
 
     if mood_ds_id:
-        defs["Zaman İçinde Ortalama Mood (Valence & Energy)"] = (
+        defs["Zaman İçinde Ortalama Mood (Valence, Energy & Danceability)"] = (
             "echarts_timeseries_line", mood_ds_id, {
                 "x_axis": "window_start_time", "x_axis_sort_asc": True,
                 # PT1H (saatlik) gruplama, birkaç dakikalık gerçek zamanlı veriyi
@@ -567,12 +574,20 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 # PT5S (5 saniyelik) ile diğer canlı grafiklerle tutarlı, akan
                 # bir çizgi elde ediyoruz.
                 "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT5S",
-                "metrics": [sql_metric("AVG(avg_valence)", "Avg Valence"), sql_metric("AVG(avg_energy)", "Avg Energy")],
+                "metrics": [
+                    sql_metric("AVG(avg_valence)", "Avg Valence"),
+                    sql_metric("AVG(avg_energy)", "Avg Energy"),
+                    sql_metric("AVG(avg_danceability)", "Avg Danceability"),
+                ],
                 "groupby": [], "adhoc_filters": [], "row_limit": 1000,
                 "truncate_metric": True, "show_legend": True, "rich_tooltip": True,
                 "y_axis_format": "SMART_NUMBER", "time_range": "Last 20 minutes",
                 "x_axis_title": "", "y_axis_title": "",
-                "label_colors": {"Avg Valence": COLOR_MAIN, "Avg Energy": COLOR_CONTRAST},
+                "label_colors": {
+                    "Avg Valence": COLOR_MAIN,
+                    "Avg Energy": COLOR_CONTRAST,
+                    "Avg Danceability": SPOTIFY_LIGHT_GREEN,
+                },
                 "line_style": "smooth", "show_area_chart": True, "opacity": 0.15, "markerEnabled": False,
             },
         )
@@ -710,6 +725,35 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "time_range": "No filter",
             },
         )
+        # "Popüler ve Beğenilen Sanatçılar": saf "Beğenilirlik Skoru" grafiği
+        # tek bir dinlemesi olup o dinleme %100 tamamlanmış (dolayısıyla
+        # "mükemmel" skor almış) sanatçıları da tepeye taşıyabiliyor - bu şans
+        # eseri bir sonuç, gerçek popülerlik değil. Burada 0-1 arasında
+        # normalize edilmiş bir skor kullanıyoruz:
+        #   - (completion_rate - skip_rate) aralığı [-1,1] -> +1/2 ile [0,1]'e
+        #     kaydırılıyor.
+        #   - ln(count+1) yerine SINIRLI bir "güven ağırlığı" kullanılıyor:
+        #     count/(count+5), bu da her zaman [0,1) aralığında kalıyor ve
+        #     dinleme sayısı arttıkça 1'e yaklaşıyor.
+        # İkisinin çarpımı da garanti şekilde [0,1] aralığında kalıyor.
+        popular_liked_expr = (
+            "((AVG(completion_rate) - (SUM(CASE WHEN is_skip THEN 1 ELSE 0 END)::float / GREATEST(COUNT(*),1))) + 1) / 2"
+            " * (COUNT(*)::float / (COUNT(*) + 5))"
+        )
+        defs["Popüler ve Beğenilen Sanatçılar"] = (
+            "echarts_timeseries_bar", events_ds_id, {
+                "x_axis": "artist_name",
+                "metrics": [sql_metric(popular_liked_expr, "Popülerlik x Beğeni")],
+                "groupby": [], "row_limit": 10, "order_desc": True,
+                "series_limit": 10,
+                "series_limit_metric": sql_metric(popular_liked_expr, "Popülerlik x Beğeni"),
+                "adhoc_filters": [], "show_legend": False,
+                "label_colors": {"Popülerlik x Beğeni": COLOR_MAIN},
+                "y_axis_bounds": [0, 1], "y_axis_format": ".2f",
+                "x_axis_title": "", "y_axis_title": "",
+                "time_range": "No filter",
+            },
+        )
 
     # --- Mühendislik Paneli --------------------------------------------
     # "Anlık Veri Akış Hızı": Kafka'ya hiç bağlanmadan, doğrudan Postgres'e
@@ -725,34 +769,83 @@ def chart_defs(mood_ds_id, leaderboard_ds_id, events_ds_id, system_ds_id, partit
                 "time_range": "Last day",
             },
         )
+        # "Anlık Akış Hızı (Sayısal)": yukarıdaki bar chart'ın son dakikasını
+        # tek bir büyük sayı olarak özetliyor - "Partition Bazlı Yük
+        # Dengesi"nin bar chart hâli tabloya taşındığı için boşalan üst-sağ
+        # yeri dolduruyor.
+        defs["Anlık Akış Hızı (Sayısal)"] = (
+            "big_number_total", events_ds_id, {
+                "metric": sql_metric("COUNT(*)", "Olay/Dakika"),
+                # "time_range": "Last 1 minute" big_number_total'da her zaman
+                # güvenilir çalışmıyor (tüm tabloyu topluyormuş gibi
+                # davranabiliyor) - bu yüzden SQL seviyesinde açık bir WHERE
+                # koşuluyla "son 1 dakika"yı garanti ediyoruz.
+                "adhoc_filters": [{
+                    "clause": "WHERE",
+                    "expressionType": "SQL",
+                    "sqlExpression": "\"timestamp\" >= NOW() - INTERVAL '1 minute'",
+                }],
+                "time_range": "No filter",
+                "subheader": "Olay sayısı",
+                "y_axis_format": "SMART_NUMBER",
+            },
+        )
 
-    # "Partition -> CPU Çekirdek Dağılımı": VibeStreamApp.scala her micro-batch'te
-    # hangi Kafka partition'ının hangi JVM thread'inde (local[*] modunda thread =
-    # çekirdek) işlendiğini partition_core_metrics tablosuna yazar. Kafka topic'i
-    # artık 4 partition ile oluşturuluyor (bkz. docker-compose.yml), böylece
-    # local[*] birden fazla çekirdeğe gerçekten iş dağıtabiliyor.
+    # "Partition Bazlı Yük Dengesi": VibeStreamApp.scala her micro-batch'te
+    # hangi Kafka partition'ının kaç kayıt taşıdığını partition_core_metrics
+    # tablosuna yazar. Şu an tek partition olduğu için hep tek satır
+    # görünmesi NORMAL ve BEKLENEN bir durum - bu, "sistem dengeli çalışıyor"
+    # demek. Partition sayısı arttırılırsa (docker-compose.yml'de
+    # --partitions), buradaki tablo dengenin bozulup bozulmadığını
+    # (bazı partition'ların aç kalıp bazılarının tıka basa dolması gibi
+    # skew durumlarını) izlemek için kullanışlı olur. Artık "CPU çekirdek"
+    # iddiası yok - dürüstçe partition yükü olarak adlandırıldı.
+    # "Partition Detay Tablosu" ile aynı stile (table + showCellBars) taşındı
+    # - bar chart yerine tablo formatı istendiği için.
     if partition_ds_id:
-        defs["Partition -> CPU Çekirdek Dağılımı"] = (
-            "echarts_timeseries_bar", partition_ds_id, {
-                # thread_name yerine thread_id kullanıyoruz: thread_name içine
-                # Spark her görev için stage/TID bilgisini gömüyor (örn.
-                # "...task 0.0 in stage 453.0 (TID 355)"), yani pratikte HER
-                # bar için FARKLI bir metin oluyor - bu da eksende yüzlerce
-                # dev, üst üste binen etiket demekti. thread_id ise JVM'in
-                # thread havuzundaki sabit sayısal kimlik, çok daha az ve
-                # okunabilir kategori üretiyor (gerçek "çekirdek" kimliği).
-                #
-                # groupby=["partition_id"] de kaldırıldı: Superset, groupby
-                # varken rengi metrik etiketine göre değil, kategori
-                # (partition_id) değerine göre seçiyor - bu yüzden dashboard
-                # seviyesindeki "Kayıt Sayısı" rengi hiç eşleşmiyor, varsayılan
-                # mavi paletin ilk rengine düşüyordu.
-                "x_axis": "thread_id",
+        defs["Partition Bazlı Yük Dengesi"] = (
+            "table", partition_ds_id, {
+                "query_mode": "aggregate", "groupby": ["partition_id"],
+                "metrics": [sql_metric("SUM(record_count)", "Toplam Kayıt Sayısı")],
+                "adhoc_filters": [], "row_limit": 32,
+                "column_config": {
+                    "Toplam Kayıt Sayısı": {"showCellBars": True, "d3NumberFormat": ",d"},
+                },
+                "time_range": "Last 15 minutes",
+            },
+        )
+        defs["Partition Yük Dengesi (Zaman İçinde)"] = (
+            "echarts_timeseries_line", partition_ds_id, {
+                # Aynı toplamı zaman ekseninde, partition başına AYRI bir
+                # çizgi olarak gösteriyoruz -> dengenin zamanla bozulup
+                # bozulmadığını (örn. bir partition'ın giderek geride kalması)
+                # burada yakalarsınız; yukarıdaki tablo sadece anlık toplamı verir.
+                "x_axis": "timestamp", "x_axis_sort_asc": True,
+                "x_axis_time_format": "%H:%M:%S", "time_grain_sqla": "PT1M",
                 "metrics": [sql_metric("SUM(record_count)", "Kayıt Sayısı")],
-                "groupby": [], "row_limit": 32, "adhoc_filters": [],
-                "show_legend": False, "label_colors": {"Kayıt Sayısı": COLOR_SECONDARY},
-                "x_axis_title": "CPU Thread ID (Çekirdek)", "y_axis_title": "İşlenen Kayıt Sayısı",
-                # Son 15 dakikadaki dağılımı göster - eski batch'ler ekranı kalabalıklaştırmasın.
+                "groupby": ["partition_id"], "adhoc_filters": [], "row_limit": 1000,
+                "show_legend": True, "rich_tooltip": True,
+                "y_axis_format": "SMART_NUMBER", "time_range": "Last 15 minutes",
+                "x_axis_title": "", "y_axis_title": "Dakikalık Kayıt Sayısı",
+                "line_style": "smooth", "markerEnabled": False,
+            },
+        )
+        defs["Partition Detay Tablosu"] = (
+            "table", partition_ds_id, {
+                # Tek bakışta hangi partition'ın kaç batch'te göründüğü,
+                # toplamda kaç kayıt taşıdığı ve ortalama batch büyüklüğü -
+                # dengesizlik varsa (örn. bir partition çok daha büyük
+                # ortalama batch'lerle çalışıyorsa) burada net görünür.
+                "query_mode": "aggregate", "groupby": ["partition_id"],
+                "metrics": [
+                    sql_metric("COUNT(*)", "Batch Sayısı"),
+                    sql_metric("SUM(record_count)", "Toplam Kayıt"),
+                    sql_metric("AVG(record_count)", "Ort. Batch Boyutu"),
+                ],
+                "adhoc_filters": [], "row_limit": 32,
+                "column_config": {
+                    "Toplam Kayıt": {"showCellBars": True, "d3NumberFormat": ",d"},
+                },
                 "time_range": "Last 15 minutes",
             },
         )
